@@ -2,15 +2,36 @@ import React, { useState } from 'react';
 import './App.css';
 
 function App() {
+  // State for user phone number input
   const [phoneNumber, setPhoneNumber] = useState('');
   
-  const handleSignup = () => {
-    if (phoneNumber) {
-      // Handle the signup process
-      alert(`Thanks for signing up with ${phoneNumber}! You'll receive food alerts via text.`);
-      // Here you would typically send the phone number to your backend
-    } else {
-      alert('Please enter your phone number to sign up.');
+  // Signup handler function to connect with backend
+  const handleSignup = async () => {
+    if (!phoneNumber) {
+      alert("Please enter your phone number");
+      return;
+    }
+    
+    try {
+      const response = await fetch('http://localhost:5001/api/signup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ phone_number: phoneNumber }),
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        alert("Thanks for signing up! You'll receive text alerts for upcoming deliveries.");
+        setPhoneNumber(''); // Clear the input field
+      } else {
+        alert("Error: " + (data.error || "Something went wrong"));
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      alert("Error connecting to server. Please try again later.");
     }
   };
   
