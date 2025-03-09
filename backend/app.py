@@ -1027,5 +1027,68 @@ def sms_webhook():
     conn.close()
     return str("OK")
 
+@app.route('/test-sms')
+def test_sms_simple():
+    # Test parameters
+    test_message = request.args.get('message', 'menu')
+    test_phone = request.args.get('phone', '+1234567890')
+    
+    # Create simple dictionary for request simulation
+    mock_values = {'Body': test_message, 'From': test_phone}
+    
+    # Run the same logic as your SMS webhook but without Twilio
+    # Find user by phone number
+    conn = sqlite3.connect('treehouse.db')
+    c = conn.cursor()
+    
+    # Extract phone number digits
+    clean_phone = ''.join(filter(str.isdigit, test_phone))
+    
+    # Check if user exists
+    c.execute("SELECT id FROM users WHERE phone_number = ?", (clean_phone,))
+    user = c.fetchone()
+    
+    if not user:
+        # Add test user if not found
+        c.execute("INSERT INTO users (phone_number) VALUES (?)", (clean_phone,))
+        conn.commit()
+        c.execute("SELECT id FROM users WHERE phone_number = ?", (clean_phone,))
+        user = c.fetchone()
+    
+    # Handle the message based on its content (same logic as in webhook)
+    result = "SMS Test Results:<br><br>"
+    
+    if test_message.lower() == 'menu':
+        # Get restaurants
+        c.execute("SELECT id, restaurant_name FROM menus")
+        restaurants = c.fetchall()
+        
+        if not restaurants:
+            result += "No restaurants available"
+        else:
+            result += "Available restaurants:<br>"
+            for idx, restaurant in enumerate(restaurants, 1):
+                result += f"{idx}. {restaurant[1]}<br>"
+    
+    # You can add more command handling as needed
+    
+    conn.close()
+    return f"""
+    <html>
+        <head><title>SMS Test</title></head>
+        <body>
+            <h1>SMS Test</h1>
+            <form>
+                <div>Message: <input name="message" value="{test_message}"></div>
+                <div>Phone: <input name="phone" value="{test_phone}"></div>
+                <button type="submit">Test</button>
+            </form>
+            <div style="margin-top: 20px; padding: 10px; border: 1px solid #ccc;">
+                {result}
+            </div>
+        </body>
+    </html>
+    """
+
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
