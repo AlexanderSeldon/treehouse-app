@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import './App.css';
+import RestaurantsSection from './RestaurantsSection';
+import TextOrderingSection from './TextOrderingSection';
 
 function App() {
   // State for user phone number input
@@ -103,6 +105,10 @@ function App() {
             </svg>
           </div>
         </section>
+        
+        {/* Add your new components here */}
+        <RestaurantsSection />
+        <TextOrderingSection />
         
         <section style={{marginBottom: '50px', backgroundColor: '#F5F5F7', padding: '40px 20px', borderRadius: '10px'}}>
           <h2 style={{fontSize: '28px', textAlign: 'center', marginBottom: '30px'}}>How TreeHouse Works</h2>
