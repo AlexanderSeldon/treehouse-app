@@ -1,11 +1,12 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import sqlite3
 import os
 from twilio.rest import Client
 from dotenv import load_dotenv
 import logging
 from datetime import datetime
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import sqlite3
+
 
 # Load environment variables
 load_dotenv()
@@ -16,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+
+@app.route('/menus/<path:filename>')
+def serve_menu(filename):
+    return send_from_directory('static/menus', filename)
 
 # Database setup
 def init_db():
@@ -376,6 +381,82 @@ def create_order():
             except Exception as e:
                 logger.error(f"Error sending order notification: {e}")
         
+        # Inside your create_order function, add this before conn.close()
+        # Send detailed notification to admin
+        if client:
+            try:
+                # Get user details
+                c.execute("SELECT phone_number, name, dorm_building, room_number FROM users WHERE id = ?", (user_id,))
+                user_details = c.fetchone()
+                user_phone = user_details[0] if user_details else "Unknown"
+                user_name = user_details[1] if user_details and user_details[1] else "Unknown"
+                dorm = user_details[2] if user_details and user_details[2] else "Unknown"
+                room = user_details[3] if user_details and user_details[3] else "Unknown"
+                
+                # Get item details
+                item_details = []
+                for item in items:
+                    item_id = item.get('menu_item_id')
+                    quantity = item.get('quantity', 1)
+                    special_instructions = item.get('special_instructions', '')
+                    
+                    c.execute("""
+                        SELECT mi.item_name, mi.price, m.restaurant_name
+                        FROM menu_items mi
+                        JOIN menus m ON mi.menu_id = m.id
+                        WHERE mi.id = ?
+                    """, (item_id,))
+                    
+                    item_info = c.fetchone()
+                    if item_info:
+                        item_details.append({
+                            'name': item_info[0],
+                            'price': float(item_info[1]),
+                            'quantity': quantity,
+                            'special': special_instructions,
+                            'restaurant': item_info[2]
+                        })
+                
+                # Build detailed notification
+                admin_note = f"NEW WEBSITE ORDER #{order_id}!\n\n"
+                admin_note += f"Customer: {user_name} ({user_phone})\n"
+                admin_note += f"Location: {dorm}, Room {room}\n\n"
+                
+                # Group by restaurant
+                restaurants = {}
+                for item in item_details:
+                    if item['restaurant'] not in restaurants:
+                        restaurants[item['restaurant']] = []
+                    restaurants[item['restaurant']].append(item)
+                
+                for restaurant, items in restaurants.items():
+                    admin_note += f"--- {restaurant} ---\n"
+                    for item in items:
+                        admin_note += f"{item['quantity']}x {item['name']} - ${item['price'] * item['quantity']:.2f}\n"
+                        if item['special']:
+                            admin_note += f"  Special: {item['special']}\n"
+                    admin_note += "\n"
+                
+                admin_note += f"Delivery fee: ${delivery_fee:.2f}\n"
+                admin_note += f"Total: ${total_amount:.2f}\n"
+                
+                if scheduled_time:
+                    # Format the scheduled time
+                    from datetime import datetime
+                    scheduled_dt = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+                    time_str = scheduled_dt.strftime("%I:%M %p on %m/%d/%Y")
+                    admin_note += f"\nScheduled for: {time_str}"
+                
+                # Send to your notification number
+                client.messages.create(
+                    body=admin_note,
+                    from_=twilio_phone,
+                    to=notification_email  # Make sure this is your phone number
+                )
+                logger.info(f"Admin order notification sent for order #{order_id}")
+            except Exception as e:
+                logger.error(f"Error sending detailed admin notification: {e}")
+        
         conn.close()
         return jsonify({
             "success": True,
@@ -670,6 +751,281 @@ def init_sample_data():
     except Exception as e:
         logger.error(f"Database error: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/webhook/sms', methods=['POST'])
+def sms_webhook():
+    # Get the incoming message details
+    incoming_message = request.values.get('Body', '').strip().lower()
+    from_number = request.values.get('From', '')
+    
+    # Clean the phone number
+    clean_phone = ''.join(filter(str.isdigit, from_number))
+    
+    # Find user by phone number
+    conn = sqlite3.connect('treehouse.db')
+    c = conn.cursor()
+    c.execute("SELECT id FROM users WHERE phone_number = ?", (clean_phone,))
+    user = c.fetchone()
+    
+    if not user:
+        response = "You're not registered with TreeHouse. Visit our website to sign up!"
+        conn.close()
+        return str(response)
+    
+    user_id = user[0]
+    
+    # Process command
+    if incoming_message == 'menu':
+        # Send list of restaurants
+        c.execute("SELECT id, restaurant_name FROM menus")
+        restaurants = c.fetchall()
+        
+        if not restaurants:
+            response = "Sorry, no restaurants available at this time. Check back later!"
+            conn.close()
+            return str(response)
+        
+        response = "Available restaurants:\n\n"
+        for idx, restaurant in enumerate(restaurants, 1):
+            response += f"{idx}. {restaurant[1]}\n"
+        
+        response += "\nReply with the number of the restaurant to see their menu."
+        
+        # Send the message
+        if client:
+            try:
+                client.messages.create(
+                    body=response,
+                    from_=twilio_phone,
+                    to=from_number
+                )
+            except Exception as e:
+                logger.error(f"Error sending menu message: {e}")
+    
+    elif incoming_message.isdigit():
+        # User selected a restaurant by number
+        restaurant_idx = int(incoming_message) - 1
+        c.execute("SELECT id, restaurant_name FROM menus")
+        restaurants = c.fetchall()
+        
+        if 0 <= restaurant_idx < len(restaurants):
+            restaurant_id, restaurant_name = restaurants[restaurant_idx]
+            
+            # Get menu items
+            c.execute("""
+                SELECT id, item_name, description, price, category 
+                FROM menu_items 
+                WHERE menu_id = ? AND is_available = 1
+                ORDER BY category, item_name
+            """, (restaurant_id,))
+            
+            menu_items = c.fetchall()
+            
+            if not menu_items:
+                response = f"Sorry, {restaurant_name} doesn't have any menu items available."
+                conn.close()
+                
+                if client:
+                    try:
+                        client.messages.create(
+                            body=response,
+                            from_=twilio_phone,
+                            to=from_number
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending error message: {e}")
+                return str(response)
+            
+            # Group by category
+            categories = {}
+            for item in menu_items:
+                category = item[4] or "Other"
+                if category not in categories:
+                    categories[category] = []
+                categories[category].append(item)
+            
+            response = f"{restaurant_name} Menu:\n\n"
+            
+            for category, items in categories.items():
+                response += f"--- {category} ---\n"
+                for item in items:
+                    response += f"{item[0]}. {item[1]} - ${item[3]:.2f}\n"
+                response += "\n"
+            
+            response += "To order, text: ORDER item_id,quantity,special request"
+            response += "\nExample: ORDER 5,2,extra sauce"
+            
+            # Send the menu
+            if client:
+                try:
+                    client.messages.create(
+                        body=response,
+                        from_=twilio_phone,
+                        to=from_number
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending menu items: {e}")
+        else:
+            response = "Invalid restaurant number. Text MENU to see the list again."
+            if client:
+                try:
+                    client.messages.create(
+                        body=response,
+                        from_=twilio_phone,
+                        to=from_number
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending error message: {e}")
+    
+    elif incoming_message.startswith('order '):
+        # Process order
+        try:
+            # Parse order command
+            order_parts = incoming_message[6:].split(',', 2)
+            
+            if len(order_parts) < 2:
+                response = "Invalid order format. Please use: ORDER item_id,quantity,special request"
+                conn.close()
+                
+                if client:
+                    try:
+                        client.messages.create(
+                            body=response,
+                            from_=twilio_phone,
+                            to=from_number
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending format error: {e}")
+                return str(response)
+            
+            item_id = int(order_parts[0].strip())
+            quantity = int(order_parts[1].strip())
+            special_request = order_parts[2].strip() if len(order_parts) > 2 else ""
+            
+            # Get the menu item
+            c.execute("""
+                SELECT mi.id, mi.item_name, mi.price, m.id as menu_id, m.restaurant_name
+                FROM menu_items mi
+                JOIN menus m ON mi.menu_id = m.id
+                WHERE mi.id = ? AND mi.is_available = 1
+            """, (item_id,))
+            
+            menu_item = c.fetchone()
+            if not menu_item:
+                response = f"Menu item with ID {item_id} not found or unavailable. Please check the menu."
+                conn.close()
+                
+                if client:
+                    try:
+                        client.messages.create(
+                            body=response,
+                            from_=twilio_phone,
+                            to=from_number
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending item not found error: {e}")
+                return str(response)
+            
+            # Calculate costs
+            item_price = float(menu_item[2])
+            subtotal = item_price * quantity
+            delivery_fee = 2.00
+            total = subtotal + delivery_fee
+            
+            # Create the order
+            c.execute("""
+                INSERT INTO orders (user_id, total_amount, delivery_fee, status)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, total, delivery_fee, 'pending'))
+            
+            order_id = c.lastrowid
+            
+            # Add the order item
+            c.execute("""
+                INSERT INTO order_items (order_id, menu_item_id, quantity, item_price, special_instructions)
+                VALUES (?, ?, ?, ?, ?)
+            """, (order_id, item_id, quantity, item_price, special_request))
+            
+            # Commit the transaction
+            conn.commit()
+            
+            # Get next delivery time (top of the next hour)
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            next_hour = (now.replace(microsecond=0, second=0, minute=0) + timedelta(hours=1))
+            
+            # Format the next delivery time
+            delivery_time_str = next_hour.strftime("%I:%M %p")
+            
+            # Send confirmation to the customer
+            response = f"Thank you for your TreeHouse order!\n\n"
+            response += f"ORDER #{order_id}\n"
+            response += f"{quantity}x {menu_item[1]} - ${subtotal:.2f}\n"
+            if special_request:
+                response += f"Special request: {special_request}\n"
+            response += f"\nDelivery fee: ${delivery_fee:.2f}\n"
+            response += f"Total: ${total:.2f}\n\n"
+            response += f"Your order will be ready for pickup at {delivery_time_str} from your dorm host.\n"
+            response += "You can pay when you receive your order."
+            
+            if client:
+                try:
+                    client.messages.create(
+                        body=response,
+                        from_=twilio_phone,
+                        to=from_number
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending order confirmation: {e}")
+            
+            # Send notification to admin
+            admin_notification = f"NEW TEXT ORDER #{order_id}!\n\n"
+            admin_notification += f"Customer: {from_number}\n"
+            admin_notification += f"Restaurant: {menu_item[4]}\n\n"
+            admin_notification += f"{quantity}x {menu_item[1]} - ${subtotal:.2f}\n"
+            if special_request:
+                admin_notification += f"Special request: {special_request}\n"
+            admin_notification += f"\nDelivery fee: ${delivery_fee:.2f}\n"
+            admin_notification += f"Total: ${total:.2f}\n\n"
+            admin_notification += f"Scheduled for pickup at {delivery_time_str}"
+            
+            if client:
+                try:
+                    # Send to your notification number
+                    client.messages.create(
+                        body=admin_notification,
+                        from_=twilio_phone,
+                        to=notification_email  # Make sure this is your phone number
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending admin notification: {e}")
+            
+        except Exception as e:
+            response = f"Error processing order: {str(e)}"
+            logger.error(f"Order processing error: {e}")
+            if client:
+                try:
+                    client.messages.create(
+                        body=response,
+                        from_=twilio_phone,
+                        to=from_number
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending error message: {e}")
+    else:
+        response = "Sorry, I didn't understand that command. Text MENU to see restaurant options."
+        if client:
+            try:
+                client.messages.create(
+                    body=response,
+                    from_=twilio_phone,
+                    to=from_number
+                )
+            except Exception as e:
+                logger.error(f"Error sending help message: {e}")
+    
+    conn.close()
+    return str("OK")
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
