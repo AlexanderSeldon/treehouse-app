@@ -6,11 +6,11 @@ TreeHouse is a streamlined food delivery service designed specifically for colle
 
 ### Key Features
 
-- **Affordable Delivery**: Fixed $2-3 delivery fee with no additional service charges
+- **Affordable Delivery**: $2-3 delivery fee with no additional service charges
 - **Text-Based Ordering**: Simple ordering process entirely through text messages
-- **Convenient Pickup**: Food delivered to student hosts in dorms for easy collection
+- **Convenient Pickup**: Food delivered to student hosts in dorm rooms for easy buyer pickup
 - **Hourly Deliveries**: Regular delivery schedule from 11am to 10pm daily
-- **First-Time Order Guarantee**: New users don't pay until food is delivered
+- **First-Time Order Guarantee**: First time buyers don't pay until food is delivered
 
 ### Tech Stack
 
