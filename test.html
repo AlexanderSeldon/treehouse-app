@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TreeHouse API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; }
+        input { width: 100%; padding: 8px; box-sizing: border-box; }
+        button { background: #1B4332; color: white; border: none; padding: 10px 15px; cursor: pointer; }
+        #response { margin-top: 20px; padding: 10px; border: 1px solid #ddd; min-height: 100px; }
+    </style>
+</head>
+<body>
+    <h1>TreeHouse API Test</h1>
+    
+    <h2>Signup Test</h2>
+    <div class="form-group">
+        <label for="phone">Phone Number:</label>
+        <input type="tel" id="phone" placeholder="Enter phone number">
+    </div>
+    <div class="form-group">
+        <label for="name">Name (optional):</label>
+        <input type="text" id="name" placeholder="Enter name">
+    </div>
+    <div class="form-group">
+        <label for="dorm">Dorm Building (optional):</label>
+        <input type="text" id="dorm" placeholder="Enter dorm building">
+    </div>
+    <div class="form-group">
+        <label for="room">Room Number (optional):</label>
+        <input type="text" id="room" placeholder="Enter room number">
+    </div>
+    <button onclick="testSignup()">Test Signup</button>
+    
+    <h2>Initialize Sample Data</h2>
+    <button onclick="initSampleData()">Initialize Sample Data</button>
+    
+    <h2>Response:</h2>
+    <pre id="response"></pre>
+    
+    <script>
+        async function testSignup() {
+            const phone = document.getElementById('phone').value;
+            const name = document.getElementById('name').value;
+            const dorm = document.getElementById('dorm').value;
+            const room = document.getElementById('room').value;
+            
+            if (!phone) {
+                alert('Phone number is required');
+                return;
+            }
+            
+            document.getElementById('response').textContent = 'Sending request...';
+            
+            try {
+                const response = await fetch('http://localhost:5001/api/signup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        phone_number: phone,
+                        name: name || undefined,
+                        dorm_building: dorm || undefined,
+                        room_number: room || undefined
+                    }),
+                });
+                
+                const data = await response.json();
+                document.getElementById('response').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('response').textContent = `Error: ${error.message}`;
+            }
+        }
+        
+        async function initSampleData() {
+            document.getElementById('response').textContent = 'Initializing sample data...';
+            
+            try {
+                const response = await fetch('http://localhost:5001/api/init-sample-data', {
+                    method: 'POST',
+                });
+                
+                const data = await response.json();
+                document.getElementById('response').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('response').textContent = `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
