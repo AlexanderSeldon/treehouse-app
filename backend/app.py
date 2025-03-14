@@ -1120,14 +1120,14 @@ def test_sms_simple():
         
         try:
             # Remove "order " and split by comma
-            order_parts = test_message[6:].split(',')
+            parts = test_message[6:].strip().split(',')
             
-            if len(order_parts) < 2:
+            if len(parts) < 2:
                 html_response += "<p>Invalid format. Use: ORDER item_id,quantity,special_request</p>"
             else:
-                item_id = int(order_parts[0].strip())
-                quantity = int(order_parts[1].strip())
-                special_request = order_parts[2].strip() if len(order_parts) > 2 else ""
+                item_id = int(parts[0].strip())
+                quantity = int(parts[1].strip())
+                special_request = parts[2].strip() if len(parts) > 2 else ""
                 
                 # Get item details
                 c.execute("""
@@ -1157,7 +1157,7 @@ def test_sms_simple():
                     c.execute("""
                         INSERT INTO order_items (order_id, menu_item_id, quantity, item_price, special_instructions)
                         VALUES (?, ?, ?, ?, ?)
-                    """, (order_id, item_id, price, quantity, special_request))
+                    """, (order_id, item_id, quantity, price, special_request))
                     
                     conn.commit()
                     
