@@ -1033,11 +1033,9 @@ def test_sms_simple():
     test_message = request.args.get('message', 'menu')
     test_phone = request.args.get('phone', '+1234567890')
     
-    # Create simple dictionary for request simulation
-    mock_values = {'Body': test_message, 'From': test_phone}
+    html_response = "<h2>SMS Test Results:</h2>"
     
-    # Run the same logic as your SMS webhook but without Twilio
-    # Find user by phone number
+    # Handle message types
     conn = sqlite3.connect('treehouse.db')
     c = conn.cursor()
     
@@ -1054,37 +1052,182 @@ def test_sms_simple():
         conn.commit()
         c.execute("SELECT id FROM users WHERE phone_number = ?", (clean_phone,))
         user = c.fetchone()
+        html_response += f"<p>Created new test user with phone: {test_phone}</p>"
     
-    # Handle the message based on its content (same logic as in webhook)
-    result = "SMS Test Results:<br><br>"
-    
+    # Handle the message based on content
     if test_message.lower() == 'menu':
         # Get restaurants
         c.execute("SELECT id, restaurant_name FROM menus")
         restaurants = c.fetchall()
         
         if not restaurants:
-            result += "No restaurants available"
+            html_response += "<p>No restaurants available</p>"
         else:
-            result += "Available restaurants:<br>"
+            html_response += "<p>Available restaurants:</p><ul>"
             for idx, restaurant in enumerate(restaurants, 1):
-                result += f"{idx}. {restaurant[1]}<br>"
+                html_response += f"<li>{idx}. {restaurant[1]}</li>"
+            html_response += "</ul>"
+            html_response += "<p>Reply with a number to see the menu</p>"
     
-    # You can add more command handling as needed
+    elif test_message.isdigit():
+        restaurant_idx = int(test_message) - 1
+        
+        # Get restaurant
+        c.execute("SELECT id, restaurant_name FROM menus")
+        restaurants = c.fetchall()
+        
+        if 0 <= restaurant_idx < len(restaurants):
+            restaurant_id, restaurant_name = restaurants[restaurant_idx]
+            
+            html_response += f"<h3>{restaurant_name} Menu</h3>"
+            
+            # Get menu items
+            c.execute("""
+                SELECT id, item_name, description, price, category 
+                FROM menu_items 
+                WHERE menu_id = ? AND is_available = 1
+                ORDER BY category, item_name
+            """, (restaurant_id,))
+            
+            menu_items = c.fetchall()
+            
+            if menu_items:
+                # Group by category
+                categories = {}
+                for item in menu_items:
+                    category = item[4] or "Other"
+                    if category not in categories:
+                        categories[category] = []
+                    categories[category].append(item)
+                
+                # Display items by category
+                for category, items in categories.items():
+                    html_response += f"<h4>--- {category} ---</h4>"
+                    html_response += "<ul>"
+                    for item in items:
+                        html_response += f"<li>ID #{item[0]}: {item[1]} - ${item[3]:.2f}<br/><small>{item[2]}</small></li>"
+                    html_response += "</ul>"
+                
+                html_response += "<p>To order, type: <code>order item_id,quantity,special request</code><br/>Example: <code>order 1,2,extra sauce</code></p>"
+            else:
+                html_response += "<p>No menu items found for this restaurant</p>"
+        else:
+            html_response += "<p>Invalid restaurant number</p>"
+    
+    elif test_message.lower().startswith('order '):
+        # Parse order
+        html_response += "<h3>Order Processing</h3>"
+        
+        try:
+            # Remove "order " and split by comma
+            order_parts = test_message[6:].split(',')
+            
+            if len(order_parts) < 2:
+                html_response += "<p>Invalid format. Use: ORDER item_id,quantity,special_request</p>"
+            else:
+                item_id = int(order_parts[0].strip())
+                quantity = int(order_parts[1].strip())
+                special_request = order_parts[2].strip() if len(order_parts) > 2 else ""
+                
+                # Get item details
+                c.execute("""
+                    SELECT mi.item_name, mi.price, m.restaurant_name
+                    FROM menu_items mi
+                    JOIN menus m ON mi.menu_id = m.id
+                    WHERE mi.id = ?
+                """, (item_id,))
+                
+                item = c.fetchone()
+                
+                if item:
+                    # Create order
+                    item_name, price, restaurant = item
+                    subtotal = price * quantity
+                    delivery_fee = 2.00
+                    total = subtotal + delivery_fee
+                    
+                    c.execute("""
+                        INSERT INTO orders (user_id, total_amount, delivery_fee, status)
+                        VALUES (?, ?, ?, ?)
+                    """, (user[0], total, delivery_fee, 'pending'))
+                    
+                    order_id = c.lastrowid
+                    
+                    # Add order item
+                    c.execute("""
+                        INSERT INTO order_items (order_id, menu_item_id, quantity, item_price, special_instructions)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (order_id, item_id, price, quantity, special_request))
+                    
+                    conn.commit()
+                    
+                    # Get next delivery time
+                    from datetime import datetime, timedelta
+                    now = datetime.now()
+                    next_hour = (now.replace(microsecond=0, second=0, minute=0) + timedelta(hours=1))
+                    delivery_time = next_hour.strftime("%I:%M %p")
+                    
+                    html_response += f"<p><strong>Thank you for your TreeHouse order!</strong></p>"
+                    html_response += f"<p><strong>ORDER #{order_id}</strong></p>"
+                    html_response += f"<p>Restaurant: {restaurant}</p>"
+                    html_response += f"<p>{quantity}x {item_name} - ${subtotal:.2f}</p>"
+                    if special_request:
+                        html_response += f"<p>Special request: {special_request}</p>"
+                    html_response += f"<p>Delivery fee: ${delivery_fee:.2f}</p>"
+                    html_response += f"<p>Total: ${total:.2f}</p>"
+                    html_response += f"<p>Your order will be ready for pickup at {delivery_time} from your dorm host.</p>"
+                    html_response += f"<p>You can pay when you receive your order.</p>"
+                else:
+                    html_response += f"<p>Item #{item_id} not found</p>"
+        except Exception as e:
+            html_response += f"<p>Error processing order: {str(e)}</p>"
+    
+    else:
+        html_response += "<p>Unknown command. Try 'menu', a number, or 'order X,Y,Z'</p>"
     
     conn.close()
+    
+    # Form for testing
     return f"""
     <html>
-        <head><title>SMS Test</title></head>
+        <head>
+            <title>SMS Test</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }}
+                form {{ background: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
+                .response {{ background: #e9f5e9; padding: 20px; border-radius: 8px; }}
+                input, button {{ padding: 8px; margin-bottom: 10px; }}
+                h1, h2, h3, h4 {{ color: #1B4332; }}
+                code {{ background: #eee; padding: 3px 5px; border-radius: 3px; }}
+                .examples {{ margin-top: 30px; background: #f8f8f8; padding: 15px; border-radius: 8px; }}
+            </style>
+        </head>
         <body>
-            <h1>SMS Test</h1>
+            <h1>TreeHouse SMS Simulator</h1>
+            
             <form>
-                <div>Message: <input name="message" value="{test_message}"></div>
-                <div>Phone: <input name="phone" value="{test_phone}"></div>
-                <button type="submit">Test</button>
+                <div>
+                    <label for="phone">Phone Number:</label>
+                    <input type="text" id="phone" name="phone" value="{test_phone}" style="width: 150px;">
+                </div>
+                <div>
+                    <label for="message">Message:</label>
+                    <input type="text" id="message" name="message" value="{test_message}" style="width: 300px;">
+                </div>
+                <button type="submit">Send</button>
             </form>
-            <div style="margin-top: 20px; padding: 10px; border: 1px solid #ccc;">
-                {result}
+            
+            <div class="response">
+                {html_response}
+            </div>
+            
+            <div class="examples">
+                <h3>Example Commands:</h3>
+                <ul>
+                    <li><code>menu</code> - Get the list of restaurants</li>
+                    <li><code>1</code> or <code>2</code> or <code>3</code> - View the menu for that restaurant</li>
+                    <li><code>order 1,2,extra sauce</code> - Order item #1, quantity 2, with special request</li>
+                </ul>
             </div>
         </body>
     </html>
