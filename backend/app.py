@@ -949,10 +949,11 @@ def sms_webhook():
             # Create or add to the cart
             if clean_phone not in active_sessions:
                 # Start a new cart session
+                import datetime as dt  # Add this line inside the function
                 active_sessions[clean_phone] = {
-                    'user_id': user_id,
+                    'user_id': user_id,  # or user[0] in test_sms_simple
                     'items': [],
-                    'started_at': datetime.now()
+                    'started_at': dt.datetime.now()  # Use dt.datetime.now() instead
                 }
             
             # Add item to cart
@@ -1253,10 +1254,12 @@ def test_sms_simple():
                 if item:
                     # Add to cart in the session
                     if clean_phone not in active_sessions:
+                        # Start a new cart session
+                        import datetime as dt  # Add this line inside the function
                         active_sessions[clean_phone] = {
-                            'user_id': user[0],
+                            'user_id': user[0],  # Use user[0] for test_sms_simple
                             'items': [],
-                            'started_at': datetime.now()
+                            'started_at': dt.datetime.now()  # Use dt.datetime.now() instead
                         }
                     
                     # Add item to cart
