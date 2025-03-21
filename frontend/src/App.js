@@ -75,7 +75,7 @@ function App() {
             
             <p style={{marginBottom: '15px'}}>Enter your phone number once to sign up AND order - everything happens by text!</p>
             <p style={{marginBottom: '15px', fontWeight: 'bold'}}>Pickup from a dorm host on your floor or a neighboring floor.</p>
-            <p style={{marginBottom: '15px'}}>Order <span style={{fontWeight: 'bold'}}>exactly at the 25-30 minute mark</span> of each hour to get your food at the top of the next hour. We deliver daily from 11am to 10pm.</p>
+            <p style={{marginBottom: '15px'}}>You <span style={{fontWeight: 'bold'}}>have to order exactly at the 25-30 minute mark</span> of each hour to get your food at the top of the next hour. We deliver daily from 11am to 10pm.</p>
             <p style={{marginBottom: '25px'}}><span style={{fontWeight: 'bold'}}>Example:</span> Order at 5:25pm, pickup your food from your dorm host at 6:00pm.</p>
             
             <div style={{display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px'}}>
