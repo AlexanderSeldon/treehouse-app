@@ -253,6 +253,9 @@ function App() {
           </div>
         </section>
         
+        {/* Add the TextOrderingSection component here */}
+        <TextOrderingSection />
+        
         {/* Ordering Process Section */}
         <section style={{marginBottom: '50px', backgroundColor: '#F5F5F7', padding: '40px 20px', borderRadius: '10px'}}>
           <h2 style={{fontSize: '28px', textAlign: 'center', marginBottom: '30px'}}>How TreeHouse Works</h2>
