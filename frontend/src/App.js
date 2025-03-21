@@ -70,7 +70,7 @@ function App() {
               ✓ FIRST-TIME ORDERS: PAY AFTER YOU GET YOUR FOOD!
             </div>
             
-            <h2 style={{fontSize: '32px', marginBottom: '10px'}}>Restaurant Delivery for ONLY $2-3</h2>
+            <h2 style={{fontSize: '32px', marginBottom: '10px'}}>Restaurant Delivery for ONLY $2-4</h2>
             <h3 style={{fontSize: '24px', marginBottom: '20px', fontWeight: 'normal'}}>No hidden fees, ever.</h3>
             
             <p style={{marginBottom: '15px'}}>Enter your phone number once to sign up AND order - everything happens by text!</p>
@@ -302,8 +302,7 @@ function App() {
               </p>
               <p style={{display: 'flex', alignItems: 'center'}}>
                 <span style={{marginRight: '10px'}}>✉️</span>
-                Email: support@treehouse.com
-              </p>
+             </p>
             </div>
           </div>
           
