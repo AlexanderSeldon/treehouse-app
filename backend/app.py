@@ -773,30 +773,46 @@ def sms_webhook():
     user = c.fetchone()
     
     if not user:
-        response = "You're not registered with TreeHouse. Visit our website to sign up!"
-        conn.close()
-        return str(response)
+        # Auto-register the user if they're not in the system
+        c.execute("INSERT INTO users (phone_number) VALUES (?)", (clean_phone,))
+        conn.commit()
+        c.execute("SELECT id FROM users WHERE phone_number = ?", (clean_phone,))
+        user = c.fetchone()
+        welcome_msg = "Welcome to TreeHouse! You've been automatically registered. "
+    else:
+        welcome_msg = ""
     
     user_id = user[0]
     
     # Process command
-    if incoming_message == 'menu':
-        # Send list of restaurants
-        c.execute("SELECT id, restaurant_name FROM menus")
-        restaurants = c.fetchall()
+    if incoming_message == 'menu' or incoming_message == 'restaurants':
+        # Get restaurant data from the frontend links
+        restaurants = [
+            {"name": "Chick-fil-A", "link": "https://order.chick-fil-a.com/menu"},
+            {"name": "Panda Express", "link": "https://www.pandaexpress.com/location/roosevelt-canal-px/menu"},
+            {"name": "Subway", "link": "https://restaurants.subway.com/united-states/il/chicago/750-s-halsted-st"},
+            {"name": "Jim's Original", "link": "http://www.jimsoriginal.com/"},
+            {"name": "Al's Beef", "link": "https://www.alsbeef.com/chicago-little-italy-taylor-street"},
+            {"name": "Busy Burger", "link": "https://www.busyburger.com/menus"},
+            {"name": "Portillo's", "link": "https://order.portillos.com/menu/portillos-hot-dogs-chicago/"},
+            {"name": "Chipotle", "link": "https://locations.chipotle.com/il/chicago/1132-s-clinton-st"},
+            {"name": "Dunkin", "link": "https://locations.dunkindonuts.com/en/il/chicago/750-s-halsted-st-university/349361"},
+            {"name": "Au Bon Pain", "link": "https://www.aubonpain.com/menu"},
+            {"name": "Thai Bowl", "link": "http://places.singleplatform.com/thai-bowl-2/menu"},
+            {"name": "Mario's Italian Ice", "link": "http://www.marioslemonade.com/menu"},
+            {"name": "Gather Tea Bar", "link": "http://www.gathersteabar.com/"},
+            {"name": "Lulu's Hot Dogs", "link": "http://lulushotdogs.com/"}
+        ]
         
-        if not restaurants:
-            response = "Sorry, no restaurants available at this time. Check back later!"
-            conn.close()
-            return str(response)
-        
-        response = "Available restaurants:\n\n"
+        response = welcome_msg + "TreeHouse Restaurant Options:\n\n"
         for idx, restaurant in enumerate(restaurants, 1):
-            response += f"{idx}. {restaurant[1]}\n"
+            response += f"{idx}. {restaurant['name']} - {restaurant['link']}\n"
         
-        response += "\nReply with the number of the restaurant to see their menu."
+        response += "\nTo order, text 'ORDER' followed by what you want from any restaurant. "
+        response += "Don't see a restaurant you want? Call (708) 901-1754 to order.\n\n"
+        response += "When you're ready to pay, text 'PAY' to get a payment link."
         
-        # Send the message
+        # Send the restaurant list
         if client:
             try:
                 client.messages.create(
@@ -804,198 +820,116 @@ def sms_webhook():
                     from_=twilio_phone,
                     to=from_number
                 )
+                logger.info(f"Sent restaurant list to {from_number}")
             except Exception as e:
-                logger.error(f"Error sending menu message: {e}")
+                logger.error(f"Error sending restaurant list: {e}")
     
-    elif incoming_message.isdigit():
-        # User selected a restaurant by number
-        restaurant_idx = int(incoming_message) - 1
-        c.execute("SELECT id, restaurant_name FROM menus")
-        restaurants = c.fetchall()
-        
-        if 0 <= restaurant_idx < len(restaurants):
-            restaurant_id, restaurant_name = restaurants[restaurant_idx]
-            
-            # Get menu items
-            c.execute("""
-                SELECT id, item_name, description, price, category 
-                FROM menu_items 
-                WHERE menu_id = ? AND is_available = 1
-                ORDER BY category, item_name
-            """, (restaurant_id,))
-            
-            menu_items = c.fetchall()
-            
-            if not menu_items:
-                response = f"Sorry, {restaurant_name} doesn't have any menu items available."
-                conn.close()
-                
-                if client:
-                    try:
-                        client.messages.create(
-                            body=response,
-                            from_=twilio_phone,
-                            to=from_number
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending error message: {e}")
-                return str(response)
-            
-            # Group by category
-            categories = {}
-            for item in menu_items:
-                category = item[4] or "Other"
-                if category not in categories:
-                    categories[category] = []
-                categories[category].append(item)
-            
-            response = f"{restaurant_name} Menu:\n\n"
-            
-            for category, items in categories.items():
-                response += f"--- {category} ---\n"
-                for item in items:
-                    response += f"{item[0]}. {item[1]} - ${item[3]:.2f}\n"
-                response += "\n"
-            
-            response += "To order, text: ORDER item_id,quantity,special request"
-            response += "\nExample: ORDER 5,2,extra sauce"
-            
-            # Send the menu
-            if client:
-                try:
-                    client.messages.create(
-                        body=response,
-                        from_=twilio_phone,
-                        to=from_number
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending menu items: {e}")
+    elif incoming_message.startswith('order ') or incoming_message == 'order':
+        # Process order with free-form text
+        if incoming_message == 'order':
+            response = "Please tell us what you'd like to order by texting 'ORDER' followed by your items. For example: 'ORDER 2 burritos from Chipotle with guac and chips'"
         else:
-            response = "Invalid restaurant number. Text MENU to see the list again."
-            if client:
-                try:
-                    client.messages.create(
-                        body=response,
-                        from_=twilio_phone,
-                        to=from_number
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending error message: {e}")
-    
-    elif incoming_message.startswith('order '):
-        # Process order
-        try:
-            # Parse order command
-            order_parts = incoming_message[6:].split(',', 2)
+            # Extract order text (everything after "order ")
+            order_text = incoming_message[6:].strip()
             
-            if len(order_parts) < 2:
-                response = "Invalid order format. Please use: ORDER item_id,quantity,special request"
-                conn.close()
-                
-                if client:
-                    try:
-                        client.messages.create(
-                            body=response,
-                            from_=twilio_phone,
-                            to=from_number
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending format error: {e}")
-                return str(response)
-            
-            try:
-                item_id = int(order_parts[0].strip())
-                quantity = int(order_parts[1].strip())
-                special_request = order_parts[2].strip() if len(order_parts) > 2 else ""
-            except ValueError:
-                response = "Please provide valid numbers for item ID and quantity. Example: ORDER 1,2,extra sauce"
-                conn.close()
-                
-                if client:
-                    try:
-                        client.messages.create(
-                            body=response,
-                            from_=twilio_phone,
-                            to=from_number
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending format error: {e}")
-                return str(response)
-            
-            # Get the menu item
-            c.execute("""
-                SELECT mi.id, mi.item_name, mi.price, m.id as menu_id, m.restaurant_name
-                FROM menu_items mi
-                JOIN menus m ON mi.menu_id = m.id
-                WHERE mi.id = ? AND mi.is_available = 1
-            """, (item_id,))
-            
-            menu_item = c.fetchone()
-            if not menu_item:
-                response = f"Menu item with ID {item_id} not found or unavailable. Please check the menu."
-                conn.close()
-                
-                if client:
-                    try:
-                        client.messages.create(
-                            body=response,
-                            from_=twilio_phone,
-                            to=from_number
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending item not found error: {e}")
-                return str(response)
-            
-            # Create or add to the cart
+            # Save the order in the session
             if clean_phone not in active_sessions:
-                # Start a new cart session
-                import datetime as dt  # Add this line inside the function
+                import datetime as dt
                 active_sessions[clean_phone] = {
-                    'user_id': user_id,  # or user[0] in test_sms_simple
-                    'items': [],
-                    'started_at': dt.datetime.now()  # Use dt.datetime.now() instead
+                    'user_id': user_id,
+                    'order_text': order_text,
+                    'started_at': dt.datetime.now()
                 }
+            else:
+                active_sessions[clean_phone]['order_text'] = order_text
             
-            # Add item to cart
-            active_sessions[clean_phone]['items'].append({
-                'item_id': item_id,
-                'item_name': menu_item[1],
-                'price': float(menu_item[2]),
-                'quantity': quantity,
-                'special_request': special_request,
-                'restaurant': menu_item[4]
-            })
-            
-            # Send confirmation and ask if they want to add more
-            response = f"Added {quantity}x {menu_item[1]} to your order!\n\n"
-            response += "Do you want to add more items? Reply \"YES\" or \"DONE\""
-            
-            if client:
-                try:
-                    client.messages.create(
-                        body=response,
-                        from_=twilio_phone,
-                        to=from_number
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending order confirmation: {e}")
-            
-        except Exception as e:
-            response = f"Error processing order: {str(e)}"
-            logger.error(f"Order processing error: {e}")
-            if client:
-                try:
-                    client.messages.create(
-                        body=response,
-                        from_=twilio_phone,
-                        to=from_number
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending error message: {e}")
+            # Acknowledge the order
+            response = f"Got it! Your order: {order_text}\n\n"
+            response += "Text 'PAY' to receive a payment link. You'll enter the exact amount of your order plus our $2-4 delivery fee."
+        
+        # Send the response
+        if client:
+            try:
+                client.messages.create(
+                    body=response,
+                    from_=twilio_phone,
+                    to=from_number
+                )
+                logger.info(f"Processed order request from {from_number}")
+            except Exception as e:
+                logger.error(f"Error processing order: {e}")
     
-    elif incoming_message.lower() == 'yes' and clean_phone in active_sessions:
-        # User wants to add more items
-        response = "What else would you like to order? Use the same format: ORDER item_id,quantity,special request"
+    elif incoming_message == 'pay':
+        # Generate a payment link
+        # This would typically integrate with Stripe or another payment processor
+        # For now, we'll simulate this with a placeholder link
+        
+        # Check if they have an active order
+        has_active_order = clean_phone in active_sessions
+        
+        # Create a payment session even if they don't have an active order
+        # (for cases where they called in their order)
+        import datetime as dt
+        payment_session_id = f"pay_{clean_phone}_{int(dt.datetime.now().timestamp())}"
+        
+        # Prepare a fake Stripe payment link (in production, this would be a real Stripe link)
+        payment_link = f"https://your-payment-site.com/pay/{payment_session_id}"
+        
+        # Save the payment session
+        if not has_active_order:
+            active_sessions[clean_phone] = {
+                'user_id': user_id,
+                'payment_session_id': payment_session_id,
+                'started_at': dt.datetime.now()
+            }
+        else:
+            active_sessions[clean_phone]['payment_session_id'] = payment_session_id
+        
+        # Send payment instructions
+        response = "Here's your payment link:\n" + payment_link + "\n\n"
+        response += "Please enter the exact price of your order from the restaurant menu plus our $2-4 delivery fee."
+        
+        if has_active_order:
+            order_text = active_sessions[clean_phone].get('order_text', '')
+            response += f"\n\nFor reference, your order was: {order_text}"
+        
+        # Send the payment link
+        if client:
+            try:
+                client.messages.create(
+                    body=response,
+                    from_=twilio_phone,
+                    to=from_number
+                )
+                logger.info(f"Sent payment link to {from_number}")
+                
+                # Send notification to admin
+                admin_note = f"PAYMENT REQUESTED!\n\n"
+                admin_note += f"Customer: {from_number}\n"
+                if has_active_order:
+                    admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
+                else:
+                    admin_note += "Note: Customer likely called in their order\n"
+                
+                client.messages.create(
+                    body=admin_note,
+                    from_=twilio_phone,
+                    to=notification_email
+                )
+                
+            except Exception as e:
+                logger.error(f"Error sending payment link: {e}")
+    
+    elif incoming_message in ['help', 'info']:
+        # Provide help information
+        response = "TreeHouse - Restaurant delivery for ONLY $2-4!\n\n"
+        response += "Commands:\n"
+        response += "• Text 'MENU' to see available restaurants\n"
+        response += "• Text 'ORDER' followed by what you want (e.g., 'ORDER 2 burritos from Chipotle')\n"
+        response += "• Text 'PAY' to get a payment link\n"
+        response += "• Call (708) 901-1754 for special orders or questions\n\n"
+        response += "Food is delivered hourly. Order by :25-:30 of each hour to get your food at the top of the next hour."
+        
         if client:
             try:
                 client.messages.create(
@@ -1004,123 +938,12 @@ def sms_webhook():
                     to=from_number
                 )
             except Exception as e:
-                logger.error(f"Error sending yes response: {e}")
-    
-    elif incoming_message.lower() == 'done' and clean_phone in active_sessions:
-        # User is done adding items, process the complete order
-        try:
-            order_session = active_sessions[clean_phone]
-            
-            # Calculate total cost
-            items = order_session['items']
-            delivery_fee = 2.00
-            subtotal = sum(item['price'] * item['quantity'] for item in items)
-            total = subtotal + delivery_fee
-            
-            # Create the order
-            c.execute("""
-                INSERT INTO orders (user_id, total_amount, delivery_fee, status)
-                VALUES (?, ?, ?, ?)
-            """, (user_id, total, delivery_fee, 'pending'))
-            
-            order_id = c.lastrowid
-            
-            # Add order items
-            for item in items:
-                c.execute("""
-                    INSERT INTO order_items (order_id, menu_item_id, quantity, item_price, special_instructions)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (order_id, item['item_id'], item['quantity'], item['price'], item['special_request']))
-            
-            # Commit the transaction
-            conn.commit()
-            
-            # Get next delivery time (top of the next hour)
-            from datetime import datetime, timedelta
-            now = datetime.now()
-            next_hour = (now.replace(microsecond=0, second=0, minute=0) + timedelta(hours=1))
-            
-            # Format the next delivery time
-            delivery_time_str = next_hour.strftime("%I:%M %p")
-            
-            # Prepare order summary
-            response = "All items added! Your order is confirmed.\n\n"
-            response += f"ORDER #{order_id}:\n"
-            
-            # Group items by restaurant
-            restaurants = {}
-            for item in items:
-                if item['restaurant'] not in restaurants:
-                    restaurants[item['restaurant']] = []
-                restaurants[item['restaurant']].append(item)
-            
-            # List items by restaurant
-            for restaurant, restaurant_items in restaurants.items():
-                response += f"\n--- {restaurant} ---\n"
-                for item in restaurant_items:
-                    response += f"{item['quantity']}x {item['item_name']} - ${item['price'] * item['quantity']:.2f}\n"
-                    if item['special_request']:
-                        response += f"  Note: {item['special_request']}\n"
-            
-            response += f"\nDelivery fee: ${delivery_fee:.2f}\n"
-            response += f"Total: ${total:.2f}\n"
-            response += f"\nYour order will be ready for pickup at {delivery_time_str} from your dorm host."
-            
-            # Send the confirmation
-            if client:
-                try:
-                    client.messages.create(
-                        body=response,
-                        from_=twilio_phone,
-                        to=from_number
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending final confirmation: {e}")
-            
-            # Send notification to admin
-            admin_notification = f"NEW TEXT ORDER #{order_id}!\n\n"
-            admin_notification += f"Customer: {from_number}\n\n"
-            
-            for restaurant, restaurant_items in restaurants.items():
-                admin_notification += f"--- {restaurant} ---\n"
-                for item in restaurant_items:
-                    admin_notification += f"{item['quantity']}x {item['item_name']} - ${item['price'] * item['quantity']:.2f}\n"
-                    if item['special_request']:
-                        admin_notification += f"  Note: {item['special_request']}\n"
-                admin_notification += "\n"
-            
-            admin_notification += f"Delivery fee: ${delivery_fee:.2f}\n"
-            admin_notification += f"Total: ${total:.2f}\n"
-            admin_notification += f"\nScheduled for pickup at {delivery_time_str}"
-            
-            if client:
-                try:
-                    client.messages.create(
-                        body=admin_notification,
-                        from_=twilio_phone,
-                        to=notification_email
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending admin notification: {e}")
-            
-            # Clear the session
-            del active_sessions[clean_phone]
-            
-        except Exception as e:
-            response = f"Error finalizing order: {str(e)}"
-            logger.error(f"Order finalization error: {e}")
-            if client:
-                try:
-                    client.messages.create(
-                        body=response,
-                        from_=twilio_phone,
-                        to=from_number
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending error message: {e}")
+                logger.error(f"Error sending help info: {e}")
     
     else:
-        response = "Sorry, I didn't understand that command. Text MENU to see restaurant options."
+        # Handle unknown commands
+        response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
+        
         if client:
             try:
                 client.messages.create(
@@ -1129,7 +952,7 @@ def sms_webhook():
                     to=from_number
                 )
             except Exception as e:
-                logger.error(f"Error sending help message: {e}")
+                logger.error(f"Error sending unknown command response: {e}")
     
     conn.close()
     return str("OK")
@@ -1149,7 +972,7 @@ def test_sms_simple():
     # Extract phone number digits
     clean_phone = ''.join(filter(str.isdigit, test_phone))
     
-    # Check if user exists
+    # Check if user exists, create if not
     c.execute("SELECT id FROM users WHERE phone_number = ?", (clean_phone,))
     user = c.fetchone()
     
@@ -1161,215 +984,125 @@ def test_sms_simple():
         user = c.fetchone()
         html_response += f"<p>Created new test user with phone: {test_phone}</p>"
     
-    # Handle the message based on content
-    if test_message.lower() == 'menu':
-        # Get restaurants
-        c.execute("SELECT id, restaurant_name FROM menus")
-        restaurants = c.fetchall()
-        
-        if not restaurants:
-            html_response += "<p>No restaurants available</p>"
-        else:
-            html_response += "<p>Available restaurants:</p><ul>"
-            for idx, restaurant in enumerate(restaurants, 1):
-                html_response += f"<li>{idx}. {restaurant[1]}</li>"
-            html_response += "</ul>"
-            html_response += "<p>Reply with a number to see the menu</p>"
+    user_id = user[0]
     
-    elif test_message.isdigit():
-        restaurant_idx = int(test_message) - 1
+    # Handle the message based on content
+    if test_message.lower() in ['menu', 'restaurants']:
+        # Display restaurant list with links
+        restaurants = [
+            {"name": "Chick-fil-A", "link": "https://order.chick-fil-a.com/menu"},
+            {"name": "Panda Express", "link": "https://www.pandaexpress.com/location/roosevelt-canal-px/menu"},
+            {"name": "Subway", "link": "https://restaurants.subway.com/united-states/il/chicago/750-s-halsted-st"},
+            {"name": "Jim's Original", "link": "http://www.jimsoriginal.com/"},
+            {"name": "Al's Beef", "link": "https://www.alsbeef.com/chicago-little-italy-taylor-street"},
+            {"name": "Busy Burger", "link": "https://www.busyburger.com/menus"},
+            {"name": "Portillo's", "link": "https://order.portillos.com/menu/portillos-hot-dogs-chicago/"},
+            {"name": "Chipotle", "link": "https://locations.chipotle.com/il/chicago/1132-s-clinton-st"},
+            {"name": "Dunkin", "link": "https://locations.dunkindonuts.com/en/il/chicago/750-s-halsted-st-university/349361"},
+            {"name": "Au Bon Pain", "link": "https://www.aubonpain.com/menu"},
+            {"name": "Thai Bowl", "link": "http://places.singleplatform.com/thai-bowl-2/menu"},
+            {"name": "Mario's Italian Ice", "link": "http://www.marioslemonade.com/menu"},
+            {"name": "Gather Tea Bar", "link": "http://www.gathersteabar.com/"},
+            {"name": "Lulu's Hot Dogs", "link": "http://lulushotdogs.com/"}
+        ]
         
-        # Get restaurant
-        c.execute("SELECT id, restaurant_name FROM menus")
-        restaurants = c.fetchall()
-        
-        if 0 <= restaurant_idx < len(restaurants):
-            restaurant_id, restaurant_name = restaurants[restaurant_idx]
-            
-            html_response += f"<h3>{restaurant_name} Menu</h3>"
-            
-            # Get menu items
-            c.execute("""
-                SELECT id, item_name, description, price, category 
-                FROM menu_items 
-                WHERE menu_id = ? AND is_available = 1
-                ORDER BY category, item_name
-            """, (restaurant_id,))
-            
-            menu_items = c.fetchall()
-            
-            if menu_items:
-                # Group by category
-                categories = {}
-                for item in menu_items:
-                    category = item[4] or "Other"
-                    if category not in categories:
-                        categories[category] = []
-                    categories[category].append(item)
-                
-                # Display items by category
-                for category, items in categories.items():
-                    html_response += f"<h4>--- {category} ---</h4>"
-                    html_response += "<ul>"
-                    for item in items:
-                        html_response += f"<li>ID #{item[0]}: {item[1]} - ${item[3]:.2f}<br/><small>{item[2]}</small></li>"
-                    html_response += "</ul>"
-                
-                html_response += "<p>To order, type: <code>order item_id,quantity,special request</code><br/>Example: <code>order 1,2,extra sauce</code></p>"
-            else:
-                html_response += "<p>No menu items found for this restaurant</p>"
-        else:
-            html_response += "<p>Invalid restaurant number</p>"
+        html_response += "<p><strong>Available Restaurants:</strong></p><ol>"
+        for restaurant in restaurants:
+            html_response += f"<li><a href='{restaurant['link']}' target='_blank'>{restaurant['name']}</a></li>"
+        html_response += "</ol>"
+        html_response += "<p>To order, text 'ORDER' followed by what you want. Don't see a restaurant you want? Call (708) 901-1754 to order.</p>"
+        html_response += "<p>Text 'PAY' when you're ready to pay.</p>"
     
     elif test_message.lower().startswith('order '):
-        # Parse order
-        html_response += "<h3>Order Processing</h3>"
+        # Process a free-form order
+        order_text = test_message[6:].strip()
         
-        try:
-            # Remove "order " and split by comma
-            parts = test_message[6:].strip().split(',')
-            
-            if len(parts) < 2:
-                html_response += "<p>Invalid format. Use: ORDER item_id,quantity,special_request</p>"
-            else:
-                try:
-                    item_id = int(parts[0].strip())
-                    quantity = int(parts[1].strip())
-                    special_request = parts[2].strip() if len(parts) > 2 else ""
-                except ValueError:
-                    html_response += "<p>Please provide valid numbers for item ID and quantity. Example: ORDER 1,2,extra sauce</p>"
-                    conn.close()
-                    return html_response
-                
-                # Get item details
-                c.execute("""
-                    SELECT mi.item_name, mi.price, m.restaurant_name
-                    FROM menu_items mi
-                    JOIN menus m ON mi.menu_id = m.id
-                    WHERE mi.id = ?
-                """, (item_id,))
-                
-                item = c.fetchone()
-                
-                if item:
-                    # Add to cart in the session
-                    if clean_phone not in active_sessions:
-                        # Start a new cart session
-                        import datetime as dt  # Add this line inside the function
-                        active_sessions[clean_phone] = {
-                            'user_id': user[0],  # Use user[0] for test_sms_simple
-                            'items': [],
-                            'started_at': dt.datetime.now()  # Use dt.datetime.now() instead
-                        }
-                    
-                    # Add item to cart
-                    item_name, price, restaurant = item
-                    active_sessions[clean_phone]['items'].append({
-                        'item_id': item_id,
-                        'item_name': item_name,
-                        'price': float(price),
-                        'quantity': quantity,
-                        'special_request': special_request,
-                        'restaurant': restaurant
-                    })
-                    
-                    html_response += f"<p>Added {quantity}x {item_name} to your order!</p>"
-                    html_response += "<p>Do you want to add more items? Reply \"YES\" or \"DONE\"</p>"
-                else:
-                    html_response += f"<p>Item #{item_id} not found</p>"
-        except Exception as e:
-            html_response += f"<p>Error processing order: {str(e)}</p>"
-            
-    elif test_message.lower() == 'yes' and clean_phone in active_sessions:
-        html_response += "<p>What else would you like to order? Use the same format: ORDER item_id,quantity,special request</p>"
+        # Store in active session
+        import datetime as dt
+        if clean_phone not in active_sessions:
+            active_sessions[clean_phone] = {
+                'user_id': user_id,
+                'order_text': order_text,
+                'started_at': dt.datetime.now()
+            }
+        else:
+            active_sessions[clean_phone]['order_text'] = order_text
         
-    elif test_message.lower() == 'done' and clean_phone in active_sessions:
-        html_response += "<h3>Order Confirmation</h3>"
+        html_response += f"<p><strong>Order Received:</strong> {order_text}</p>"
+        html_response += "<p>Text 'PAY' to get a payment link.</p>"
+    
+    elif test_message.lower() == 'order':
+        html_response += "<p>Please tell us what you'd like to order by texting 'ORDER' followed by your items.</p>"
+        html_response += "<p>For example: 'ORDER 2 burritos from Chipotle with guac and chips'</p>"
+    
+    elif test_message.lower() == 'pay':
+        # Generate a payment link
+        import datetime as dt
+        payment_session_id = f"pay_{clean_phone}_{int(dt.datetime.now().timestamp())}"
+        payment_link = f"https://your-payment-site.com/pay/{payment_session_id}"
         
-        try:
-            # Calculate total cost
-            order_session = active_sessions[clean_phone]
-            items = order_session['items']
-            delivery_fee = 2.00
-            subtotal = sum(item['price'] * item['quantity'] for item in items)
-            total = subtotal + delivery_fee
-            
-            # Create the order
-            c.execute("""
-                INSERT INTO orders (user_id, total_amount, delivery_fee, status)
-                VALUES (?, ?, ?, ?)
-            """, (user[0], total, delivery_fee, 'pending'))
-            
-            order_id = c.lastrowid
-            
-            # Add order items
-            for item in items:
-                c.execute("""
-                    INSERT INTO order_items (order_id, menu_item_id, quantity, item_price, special_instructions)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (order_id, item['item_id'], item['quantity'], item['price'], item['special_request']))
-            
-            conn.commit()
-            
-            # Get next delivery time
-            from datetime import datetime, timedelta
-            now = datetime.now()
-            next_hour = (now.replace(microsecond=0, second=0, minute=0) + timedelta(hours=1))
-            delivery_time = next_hour.strftime("%I:%M %p")
-            
-            html_response += f"<p><strong>All items added! Your order is confirmed.</strong></p>"
-            html_response += f"<p><strong>ORDER #{order_id}</strong></p>"
-            
-            # Group items by restaurant
-            restaurants = {}
-            for item in items:
-                if item['restaurant'] not in restaurants:
-                    restaurants[item['restaurant']] = []
-                restaurants[item['restaurant']].append(item)
-            
-            # List items by restaurant
-            for restaurant, restaurant_items in restaurants.items():
-                html_response += f"<h4>--- {restaurant} ---</h4>"
-                html_response += "<ul>"
-                for item in restaurant_items:
-                    html_response += f"<li>{item['quantity']}x {item['item_name']} - ${item['price'] * item['quantity']:.2f}"
-                    if item['special_request']:
-                        html_response += f"<br/><small>Note: {item['special_request']}</small>"
-                    html_response += "</li>"
-                html_response += "</ul>"
-            
-            html_response += f"<p>Delivery fee: ${delivery_fee:.2f}</p>"
-            html_response += f"<p>Total: ${total:.2f}</p>"
-            html_response += f"<p>Your order will be ready for pickup at {delivery_time} from your dorm host.</p>"
-            
-            # Clear the session
-            del active_sessions[clean_phone]
-            
-        except Exception as e:
-            html_response += f"<p>Error finalizing order: {str(e)}</p>"
+        # Store or update in active session
+        if clean_phone not in active_sessions:
+            active_sessions[clean_phone] = {
+                'user_id': user_id,
+                'payment_session_id': payment_session_id,
+                'started_at': dt.datetime.now()
+            }
+            html_response += "<p>No active order found, but still generating payment link.</p>"
+        else:
+            active_sessions[clean_phone]['payment_session_id'] = payment_session_id
+            order_text = active_sessions[clean_phone].get('order_text')
+            if order_text:
+                html_response += f"<p><strong>Your order:</strong> {order_text}</p>"
+        
+        html_response += f"<p><strong>Payment Link:</strong> <a href='{payment_link}' target='_blank'>{payment_link}</a></p>"
+        html_response += "<p>Please enter the exact price of your order from the restaurant menu plus our $2-4 delivery fee.</p>"
+        
+        # Simulate admin notification
+        html_response += "<div style='margin-top: 20px; padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd;'>"
+        html_response += "<p><strong>Admin Notification:</strong></p>"
+        html_response += f"<p>PAYMENT REQUESTED!<br/>Customer: {test_phone}</p>"
+        
+        if clean_phone in active_sessions and 'order_text' in active_sessions[clean_phone]:
+            html_response += f"<p>Order: {active_sessions[clean_phone]['order_text']}</p>"
+        else:
+            html_response += "<p>Note: Customer likely called in their order</p>"
+        
+        html_response += "</div>"
+    
+    elif test_message.lower() in ['help', 'info']:
+        html_response += "<p><strong>TreeHouse Help</strong></p>"
+        html_response += "<ul>"
+        html_response += "<li>Text 'MENU' to see available restaurants</li>"
+        html_response += "<li>Text 'ORDER' followed by what you want</li>"
+        html_response += "<li>Text 'PAY' to get a payment link</li>"
+        html_response += "<li>Call (708) 901-1754 for special orders or questions</li>"
+        html_response += "</ul>"
+        html_response += "<p>Food is delivered hourly. Order by :25-:30 of each hour to get your food at the top of the next hour.</p>"
     
     else:
-        html_response += "<p>Unknown command. Try 'menu', a number, 'order X,Y,Z', 'yes', or 'done'</p>"
+        html_response += "<p>I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link.</p>"
+        html_response += "<p>Need help? Text 'HELP' or call (708) 901-1754.</p>"
     
     conn.close()
     
-    # Display current cart if exists
+    # Display active session if it exists
     if clean_phone in active_sessions:
-        cart_items = active_sessions[clean_phone]['items']
-        if cart_items:
-            html_response += "<h3>Your Current Cart:</h3><ul>"
-            for item in cart_items:
-                html_response += f"<li>{item['quantity']}x {item['item_name']} - ${item['price'] * item['quantity']:.2f}"
-                if item['special_request']:
-                    html_response += f" (Note: {item['special_request']})"
-                html_response += "</li>"
-            html_response += "</ul>"
+        session_info = active_sessions[clean_phone]
+        html_response += "<div style='margin-top: 20px; padding: 10px; background-color: #e9f7ef; border: 1px solid #ddd;'>"
+        html_response += "<p><strong>Current Session Info:</strong></p>"
+        
+        for key, value in session_info.items():
+            if key != 'started_at':  # Skip the timestamp for clarity
+                html_response += f"<p>{key}: {value}</p>"
+                
+        html_response += "</div>"
     
     # Form for testing
     return f"""
     <html>
         <head>
-            <title>SMS Test</title>
+            <title>TreeHouse SMS Test</title>
             <style>
                 body {{ font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }}
                 form {{ background: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
@@ -1402,11 +1135,11 @@ def test_sms_simple():
             <div class="examples">
                 <h3>Example Commands:</h3>
                 <ul>
-                    <li><code>menu</code> - Get the list of restaurants</li>
-                    <li><code>1</code> or <code>2</code> or <code>3</code> - View the menu for that restaurant</li>
-                    <li><code>order 1,2,extra sauce</code> - Order item #1, quantity 2, with special request</li>
-                    <li><code>yes</code> - Add more items to your order</li>
-                    <li><code>done</code> - Finish your order and confirm</li>
+                    <li><code>menu</code> or <code>restaurants</code> - See available restaurants</li>
+                    <li><code>order</code> - Get ordering instructions</li>
+                    <li><code>order 2 burritos from Chipotle with extra guac</code> - Place a free-form order</li>
+                    <li><code>pay</code> - Get a payment link</li>
+                    <li><code>help</code> or <code>info</code> - Get help information</li>
                 </ul>
             </div>
         </body>
