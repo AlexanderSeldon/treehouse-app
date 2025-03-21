@@ -106,10 +106,154 @@ function App() {
           </div>
         </section>
         
-        {/* Add your new components here */}
-        <RestaurantsSection />
-        <TextOrderingSection />
+        {/* Restaurant Links Section */}
+        <section style={{marginBottom: '50px', padding: '40px 20px', borderRadius: '10px', border: '1px solid #eee'}}>
+          <h2 style={{fontSize: '28px', textAlign: 'center', marginBottom: '30px'}}>Restaurant Menus</h2>
+          
+          <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px'}}>
+            {/* Chick-fil-A */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Chick-fil-A</h3>
+              <a href="https://order.chick-fil-a.com/menu" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Panda Express */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Panda Express</h3>
+              <a href="https://www.pandaexpress.com/location/roosevelt-canal-px/menu" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Subway */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Subway</h3>
+              <a href="https://restaurants.subway.com/united-states/il/chicago/750-s-halsted-st?utm_source=yxt-goog&utm_medium=local&utm_term=acq&utm_content=26444&utm_campaign=evergreen-2020&y_source=1_MTQ5MTY3OTItNzE1LWxvY2F0aW9uLndlYnNpdGU%3D" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Jim's Original */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Jim's Original</h3>
+              <a href="http://www.jimsoriginal.com/" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Al's Beef */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Al's Beef</h3>
+              <a href="https://www.alsbeef.com/chicago-little-italy-taylor-street" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Busy Burger */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Busy Burger</h3>
+              <a href="https://www.busyburger.com/menus" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Portillo's */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Portillo's</h3>
+              <a href="https://order.portillos.com/menu/portillos-hot-dogs-chicago/" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Chipotle */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Chipotle</h3>
+              <a href="https://locations.chipotle.com/il/chicago/1132-s-clinton-st?utm_source=google&utm_medium=yext&utm_campaign=yext_listings" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Dunkin */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Dunkin</h3>
+              <a href="https://locations.dunkindonuts.com/en/il/chicago/750-s-halsted-st-university/349361?utm_source=google&utm_medium=local&utm_campaign=localmaps&utm_content=349361&y_source=1_MTIxMTQ3NTktNzE1LWxvY2F0aW9uLndlYnNpdGU%3D" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Au Bon Pain */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Au Bon Pain</h3>
+              <a href="https://www.aubonpain.com/menu" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Thai Bowl */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Thai Bowl</h3>
+              <a href="http://places.singleplatform.com/thai-bowl-2/menu?ref=google" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Mario's Italian Ice */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Mario's Italian Ice</h3>
+              <a href="http://www.marioslemonade.com/menu" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Gather Tea Bar */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Gather Tea Bar</h3>
+              <a href="http://www.gathersteabar.com/" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+            
+            {/* Lulu's Hot Dogs */}
+            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
+              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Lulu's Hot Dogs</h3>
+              <a href="http://lulushotdogs.com/" target="_blank" rel="noopener noreferrer" 
+                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
+                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
+                View Menu
+              </a>
+            </div>
+          </div>
+        </section>
         
+        {/* Ordering Process Section */}
         <section style={{marginBottom: '50px', backgroundColor: '#F5F5F7', padding: '40px 20px', borderRadius: '10px'}}>
           <h2 style={{fontSize: '28px', textAlign: 'center', marginBottom: '30px'}}>How TreeHouse Works</h2>
           
@@ -121,8 +265,12 @@ function App() {
               </div>
               
               <div>
-                <h3 style={{fontSize: '22px', color: '#1B4332', marginBottom: '10px'}}>2. Everything happens by text</h3>
-                <p>Get text alerts about upcoming deliveries, order via text, and get notifications when your food arrives.</p>
+                <h3 style={{fontSize: '22px', color: '#1B4332', marginBottom: '10px'}}>Ordering Process:</h3>
+                <ol style={{textAlign: 'left', maxWidth: '400px', margin: '0 auto', lineHeight: '1.6'}}>
+                  <li>Browse restaurant menus on our website</li>
+                  <li>Text us your order details</li>
+                  <li>We send a payment link (you enter menu price, we add delivery fee)</li>
+                </ol>
               </div>
               
               <div>
