@@ -260,7 +260,7 @@ function App() {
           <div style={{backgroundColor: 'white', borderRadius: '10px', padding: '30px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.05)'}}>
             <div style={{display: 'flex', flexDirection: 'column', gap: '30px', textAlign: 'center'}}>
               <div>
-                <h3 style={{fontSize: '22px', color: '#1B4332', marginBottom: '10px'}}>1. Pay just $2-3 for delivery</h3>
+                <h3 style={{fontSize: '22px', color: '#1B4332', marginBottom: '10px'}}>1. Pay just $2-4 for delivery</h3>
                 <p>No service fees. No markups. No subscriptions. Restaurant prices are exactly the same as in-store.</p>
               </div>
               
