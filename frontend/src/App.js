@@ -301,7 +301,7 @@ function App() {
                 Call or Text: (708) 901-1754
               </p>
               <p style={{display: 'flex', alignItems: 'center'}}>
-                <span style={{marginRight: '10px'}}>✉️</span>
+                <span style={{marginRight: '10px'}}></span>
              </p>
             </div>
           </div>
