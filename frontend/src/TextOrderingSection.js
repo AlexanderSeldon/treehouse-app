@@ -88,7 +88,7 @@ function TextOrderingSection() {
              display: 'inline-block',
              maxWidth: '80%'
            }}>
-             <p style={{margin: '0', fontSize: '15px'}}>Got it! Your order: 2 burritos from Chipotle with extra guac and a side of chips</p>
+             <p style={{margin: '0', fontSize: '15px'}}>Got it! Your order: 2 burritos from Chipotle with extra guac and a side of chips for Thomas Beckham Hall.</p>
              <p style={{margin: '5px 0 0 0', fontSize: '14px'}}>Text 'PAY' to receive a payment link.</p>
            </div>
          </div>
