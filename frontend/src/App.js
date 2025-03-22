@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import './App.css';
 import RestaurantsSection from './RestaurantsSection';
 import TextOrderingSection from './TextOrderingSection';
+import Logo from './Logo';
 
 function App() {
   // State for user phone number input
@@ -42,19 +43,7 @@ function App() {
       <header style={{padding: '15px 0', borderBottom: '1px solid #eee', position: 'fixed', width: '100%', backgroundColor: 'white', zIndex: 100}}>
         <div style={{display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '1200px', margin: '0 auto', padding: '0 20px', alignItems: 'center'}}>
           <div style={{display: 'flex', alignItems: 'center'}}>
-            <svg width="40" height="40" viewBox="0 0 1000 800" xmlns="http://www.w3.org/2000/svg" style={{marginRight: '10px'}}>
-              <g>
-                {/* House shape */}
-                <path d="M500 100 L880 380 L880 700 L120 700 L120 380 Z" fill="#1B4332" />
-                {/* Chimney */}
-                <rect x="750" y="180" width="80" height="200" fill="#1B4332" />
-                {/* Leaf inside house */}
-                <path d="M500 600 
-                         C650 450, 620 350, 500 400 
-                         C380 350, 350 450, 500 600" 
-                      fill="#FFFFFF" />
-              </g>
-            </svg>
+          <Logo style={{marginRight: '10px'}} />
             <h1 style={{fontSize: '24px', color: '#1B4332', margin: 0}}>TreeHouse</h1>
           </div>
           <button style={{background: '#1B4332', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>
@@ -96,13 +85,7 @@ function App() {
           </div>
           
           <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center'}}>
-            <svg width="100%" height="auto" viewBox="0 0 500 400" xmlns="http://www.w3.org/2000/svg" style={{maxWidth: '400px', boxShadow: '0 4px 10px rgba(0, 0, 0, 0.1)', borderRadius: '10px'}}>
-              <g>
-                <path d="M250 60 L460 230 L460 350 L40 350 L40 230 Z" fill="#1B4332" />
-                <rect x="380" y="120" width="40" height="110" fill="#1B4332" />
-                <path d="M250 320 C340 230, 330 180, 260 200 C190 220, 140 270, 160 300 C180 330, 230 340, 250 320" fill="#FFFFFF" />
-              </g>
-            </svg>
+            <Logo width="100%" height="auto" style={{maxWidth: '400px', boxShadow: '0 4px 10px rgba(0, 0, 0, 0.1)', borderRadius: '10px'}} />
           </div>
         </section>
         
@@ -305,7 +288,7 @@ function App() {
               </p>
               <p style={{display: 'flex', alignItems: 'center'}}>
                 <span style={{marginRight: '10px'}}></span>
-             </p>
+              </p>
             </div>
           </div>
           
