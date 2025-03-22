@@ -78,7 +78,7 @@ function TextOrderingSection() {
              display: 'inline-block',
              maxWidth: '80%'
            }}>
-             <p style={{margin: '0', fontSize: '15px'}}><strong>ORDER 2 burritos from Chipotle with extra guac and a side of chips</strong></p>
+             <p style={{margin: '0', fontSize: '15px'}}><strong>ORDER 2 burritos from Chipotle with extra guac and a side of chips at Thomas Beckham Hall</strong></p>
            </div>
            <div style={{
              backgroundColor: '#f0f0f0',
@@ -88,11 +88,11 @@ function TextOrderingSection() {
              display: 'inline-block',
              maxWidth: '80%'
            }}>
-             <p style={{margin: '0', fontSize: '15px'}}>Got it! Your order: 2 burritos from Chipotle with extra guac and a side of chips for Thomas Beckham Hall.</p>
+             <p style={{margin: '0', fontSize: '15px'}}>Got it! Your order: 2 burritos from Chipotle with extra guac and a side of chips at Thomas Beckham Hall.</p>
              <p style={{margin: '5px 0 0 0', fontSize: '14px'}}>Text 'PAY' to receive a payment link.</p>
            </div>
          </div>
-         <p style={{fontSize: '14px'}}>Text "ORDER" followed by what you want from any restaurant. Be specific and include any special requests.</p>
+         <p style={{fontSize: '14px'}}>Text "ORDER" followed by what you want from any restaurant. Be specific and include any special requests and your dorm/aprtment name.</p>
        </div>
        
        {/* Step 3 */}
