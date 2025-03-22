@@ -277,7 +277,7 @@ function App() {
           <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '30px'}}>
             <div>
               <h3 style={{fontSize: '20px', marginBottom: '15px'}}>TreeHouse</h3>
-              <p>Restaurant delivery for college students<br />Just $2-3. No hidden fees, ever.</p>
+              <p>Restaurant delivery for college students<br />Just $2-4. No hidden fees, ever.</p>
             </div>
             
             <div>
