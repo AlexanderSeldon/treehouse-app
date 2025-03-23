@@ -7,7 +7,7 @@ import Logo from './Logo';
 function App() {
   // State for user phone number input
   const [phoneNumber, setPhoneNumber] = useState('');
-  
+  const [dormBuilding, setDormBuilding] = useState(''); 
   // Signup handler function to connect with backend
   const handleSignup = async () => {
     if (!phoneNumber) {
@@ -21,7 +21,10 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ phone_number: phoneNumber }),
+        body: JSON.stringify({ 
+          phone_number: phoneNumber,
+          dorm_building: dormBuilding  // Include dorm building in request
+        }),
       });
       
       const data = await response.json();
@@ -29,6 +32,7 @@ function App() {
       if (response.ok) {
         alert("Thanks for signing up! You'll receive text alerts for upcoming deliveries.");
         setPhoneNumber(''); // Clear the input field
+        setDormBuilding(''); // Clear dorm selection
       } else {
         alert("Error: " + (data.error || "Something went wrong"));
       }
@@ -43,7 +47,7 @@ function App() {
       <header style={{padding: '15px 0', borderBottom: '1px solid #eee', position: 'fixed', width: '100%', backgroundColor: 'white', zIndex: 100}}>
         <div style={{display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '1200px', margin: '0 auto', padding: '0 20px', alignItems: 'center'}}>
           <div style={{display: 'flex', alignItems: 'center'}}>
-          <Logo style={{marginRight: '10px'}} />
+            <Logo style={{marginRight: '10px'}} />
             <h1 style={{fontSize: '24px', color: '#1B4332', margin: 0}}>TreeHouse</h1>
           </div>
           <button style={{background: '#1B4332', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>
@@ -75,6 +79,25 @@ function App() {
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 style={{padding: '12px', borderRadius: '4px', border: '1px solid #ddd'}}
               />
+              <select
+                value={dormBuilding}
+                onChange={(e) => setDormBuilding(e.target.value)}
+                style={{padding: '12px', borderRadius: '4px', border: '1px solid #ddd'}}
+              >
+                <option value="">Select Your Dorm/Building</option>
+                <option value="Building A">Building A</option>
+                <option value="Building B">Building B</option>
+                <option value="Building C">Building C</option>
+                <option value="Building D">Building D</option>
+                <option value="Building E">Building E</option>
+                <option value="Residence Hall 1">Residence Hall 1</option>
+                <option value="Residence Hall 2">Residence Hall 2</option>
+                <option value="North Commons">North Commons</option>
+                <option value="South Commons">South Commons</option>
+                <option value="East Commons">East Commons</option>
+                <option value="West Commons">West Commons</option>
+                <option value="Other">Other</option>
+              </select>
               <button 
                 style={{background: '#1B4332', color: 'white', padding: '12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
                 onClick={handleSignup}
