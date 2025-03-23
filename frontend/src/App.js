@@ -79,25 +79,13 @@ function App() {
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 style={{padding: '12px', borderRadius: '4px', border: '1px solid #ddd'}}
               />
-              <select
+              <input 
+                type="text" 
+                placeholder="Enter your dorm/building name"
                 value={dormBuilding}
                 onChange={(e) => setDormBuilding(e.target.value)}
                 style={{padding: '12px', borderRadius: '4px', border: '1px solid #ddd'}}
-              >
-                <option value="">Select Your Dorm/Building</option>
-                <option value="Building A">Building A</option>
-                <option value="Building B">Building B</option>
-                <option value="Building C">Building C</option>
-                <option value="Building D">Building D</option>
-                <option value="Building E">Building E</option>
-                <option value="Residence Hall 1">Residence Hall 1</option>
-                <option value="Residence Hall 2">Residence Hall 2</option>
-                <option value="North Commons">North Commons</option>
-                <option value="South Commons">South Commons</option>
-                <option value="East Commons">East Commons</option>
-                <option value="West Commons">West Commons</option>
-                <option value="Other">Other</option>
-              </select>
+              />
               <button 
                 style={{background: '#1B4332', color: 'white', padding: '12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
                 onClick={handleSignup}
