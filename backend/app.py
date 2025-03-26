@@ -225,7 +225,7 @@ def signup():
         if is_new_user and client:
             try:
                 message = client.messages.create(
-                    body=f"New TreeHouse signup! Phone: {phone_number}",
+                    body=f"New TreeHouse signup! Phone: {phone_number}, Dorm/Building: {dorm_building or 'Not specified'}",
                     from_=twilio_phone,
                     to=notification_email
                 )
