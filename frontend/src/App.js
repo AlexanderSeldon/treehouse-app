@@ -30,7 +30,25 @@ function App() {
       const data = await response.json();
       
       if (response.ok) {
-        alert("Thanks for signing up! You'll receive text alerts for upcoming deliveries.");
+        // Create a visible element on the page
+        const confirmationDiv = document.createElement('div');
+        confirmationDiv.style.backgroundColor = '#d4edda';
+        confirmationDiv.style.color = '#155724';
+        confirmationDiv.style.padding = '12px';
+        confirmationDiv.style.margin = '15px 0';
+        confirmationDiv.style.borderRadius = '4px';
+        confirmationDiv.style.fontWeight = 'bold';
+        confirmationDiv.textContent = "Thanks for signing up! You'll receive text alerts for upcoming deliveries.";
+        
+        // Find the form and insert the confirmation after it
+        const form = document.querySelector('.App form') || document.querySelector('.App button').parentNode;
+        form.parentNode.insertBefore(confirmationDiv, form.nextSibling);
+        
+        // Remove it after 5 seconds
+        setTimeout(() => {
+          confirmationDiv.remove();
+        }, 5000);
+        
         setPhoneNumber(''); // Clear the input field
         setDormBuilding(''); // Clear dorm selection
       } else {
