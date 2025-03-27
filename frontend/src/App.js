@@ -75,7 +75,7 @@ function App() {
         </div>
       </header>
       
-      <main style={{padding: '20px', paddingTop: '100px', maxWidth: '1200px', margin: '0 auto'}}>
+      <main style={{padding: '20px', paddingTop: '150px', maxWidth: '1200px', margin: '0 auto'}}>
         <section style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '40px', marginBottom: '50px'}}>
           <div>
             <div style={{display: 'inline-flex', alignItems: 'center', backgroundColor: '#1B4332', color: 'white', fontWeight: 'bold', padding: '10px 15px', borderRadius: '8px', marginBottom: '20px'}}>
