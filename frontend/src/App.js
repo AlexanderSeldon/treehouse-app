@@ -119,11 +119,13 @@ function App() {
   display: 'flex', 
   justifyContent: 'center', 
   alignItems: 'center',
-  padding: '10px'
+  padding: '10px',
+  height: '100%' // Take full height of parent
 }}>
   <div style={{
     width: '100%',
     maxWidth: '450px',
+    height: '450px', // Set a specific height to make it taller
     border: '3px solid #1B4332', 
     borderRadius: '12px',
     padding: '4px',
@@ -135,10 +137,10 @@ function App() {
       alt="TreeHouse Food Delivery"
       style={{
         width: '100%',
-        height: 'auto',
+        height: '100%', // Fill the entire container
         borderRadius: '8px',
         objectFit: 'cover',
-        aspectRatio: '4/3', // Maintains a consistent ratio
+        // aspectRatio removed to allow custom height
       }}
     />
   </div>
