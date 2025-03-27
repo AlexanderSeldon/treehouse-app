@@ -1,14 +1,18 @@
 import React from 'react';
 import logoImage from './assets/logo1.png'; // Adjust the path to where your logo is located
 
-function Logo({ width = '40px', height = '40px', style = {} }) {
+function Logo({ style = {} }) {
+  // Removed width and height props to prevent overriding the style object
+  
   return (
     <img 
       src={logoImage}
       alt="TreeHouse Logo"
-      width={width}
-      height={height}
-      style={style}
+      style={{
+        width: '100px',
+        height: '100px',
+        ...style // This allows additional style properties to be added
+      }}
     />
   );
 }
