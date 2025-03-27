@@ -10,6 +10,14 @@ function App() {
   // State for user phone number input
   const [phoneNumber, setPhoneNumber] = useState('');
   const [dormBuilding, setDormBuilding] = useState(''); 
+  
+  const scrollToHowItWorks = () => {
+    const howItWorksSection = document.getElementById('how-it-works-section');
+    if (howItWorksSection) {
+      howItWorksSection.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+  
   // Signup handler function to connect with backend
   const handleSignup = async () => {
     if (!phoneNumber) {
@@ -69,9 +77,12 @@ function App() {
         <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
   <Logo />
 </div>
-          <button style={{background: '#1B4332', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>
-            How It Works
-          </button>
+<button 
+  style={{background: '#1B4332', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+  onClick={scrollToHowItWorks}
+>
+  How It Works
+</button>
         </div>
       </header>
       
@@ -297,7 +308,7 @@ function App() {
         <TextOrderingSection />
         
         {/* Ordering Process Section */}
-        <section style={{marginBottom: '50px', backgroundColor: '#F5F5F7', padding: '40px 20px', borderRadius: '10px'}}>
+        <section id="how-it-works-section" style={{marginBottom: '50px', backgroundColor: '#F5F5F7', padding: '40px 20px', borderRadius: '10px'}}>
           <h2 style={{fontSize: '28px', textAlign: 'center', marginBottom: '30px'}}>How TreeHouse Works</h2>
           
           <div style={{backgroundColor: 'white', borderRadius: '10px', padding: '30px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.05)'}}>
