@@ -67,8 +67,8 @@ function App() {
       <header style={{padding: '15px 0', borderBottom: '1px solid #eee', position: 'fixed', width: '100%', backgroundColor: 'white', zIndex: 100}}>
         <div style={{display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '1200px', margin: '0 auto', padding: '0 20px', alignItems: 'center'}}>
         <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-            <Logo style={{width: '50px', height: '50px'}} />
-          </div>
+  <Logo />
+</div>
           <button style={{background: '#1B4332', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>
             How It Works
           </button>
