@@ -5,6 +5,7 @@ import TextOrderingSection from './TextOrderingSection';
 import Logo from './Logo';
 import frontpageImage from './assets/frontpage.jpg';
 
+
 function App() {
   // State for user phone number input
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -114,19 +115,33 @@ function App() {
             </div>
           </div>
           
-          <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center'}}>
-  <img 
-    src={frontpageImage}
-    alt="TreeHouse Food Delivery"
-    style={{
-      width: '100%',
-      height: 'auto',
-      maxWidth: '400px', 
-      objectFit: 'contain',
-      boxShadow: '0 4px 10px rgba(0, 0, 0, 0.1)', 
-      borderRadius: '10px'
-    }}
-  />
+          <div style={{
+  display: 'flex', 
+  justifyContent: 'center', 
+  alignItems: 'center',
+  padding: '10px'
+}}>
+  <div style={{
+    width: '100%',
+    maxWidth: '450px',
+    border: '3px solid #1B4332', 
+    borderRadius: '12px',
+    padding: '4px',
+    boxShadow: '0 6px 15px rgba(0, 0, 0, 0.15)',
+    background: 'white',
+  }}>
+    <img 
+      src={frontpageImage}
+      alt="TreeHouse Food Delivery"
+      style={{
+        width: '100%',
+        height: 'auto',
+        borderRadius: '8px',
+        objectFit: 'cover',
+        aspectRatio: '4/3', // Maintains a consistent ratio
+      }}
+    />
+  </div>
 </div>
         </section>
         
