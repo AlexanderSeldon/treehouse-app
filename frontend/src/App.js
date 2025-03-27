@@ -3,6 +3,7 @@ import './App.css';
 import RestaurantsSection from './RestaurantsSection';
 import TextOrderingSection from './TextOrderingSection';
 import Logo from './Logo';
+import frontpageImage from './assets/frontpage.jpg';
 
 function App() {
   // State for user phone number input
@@ -114,8 +115,19 @@ function App() {
           </div>
           
           <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center'}}>
-            <Logo width="100%" height="auto" style={{maxWidth: '400px', boxShadow: '0 4px 10px rgba(0, 0, 0, 0.1)', borderRadius: '10px'}} />
-          </div>
+  <img 
+    src={frontpageImage}
+    alt="TreeHouse Food Delivery"
+    style={{
+      width: '100%',
+      height: 'auto',
+      maxWidth: '400px', 
+      objectFit: 'contain',
+      boxShadow: '0 4px 10px rgba(0, 0, 0, 0.1)', 
+      borderRadius: '10px'
+    }}
+  />
+</div>
         </section>
         
         {/* Restaurant Links Section */}
