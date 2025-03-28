@@ -1153,18 +1153,10 @@ def serve_react_app():
 
 @app.route('/static/<path:path>')
 def serve_static(path):
-    # Check if it's a media file which is in a different location
-    if path.startswith('media/'):
+    try:
         return send_from_directory('static/react/static', path)
-    # For js and css files
-    elif path.startswith('js/') or path.startswith('css/'):
-        return send_from_directory('static/react/static', path)
-    # For other files that might be directly in static/react
-    else:
-        try:
-            return send_from_directory('static/react/static', path)
-        except:
-            return send_from_directory('static/react', path)
+    except:
+        return send_from_directory('static/react', path)
 
 
 
