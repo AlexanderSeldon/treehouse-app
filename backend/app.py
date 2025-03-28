@@ -20,6 +20,7 @@ active_sessions = {}  # Store active ordering sessions by phone number
 app = Flask(__name__)
 CORS(app)
 
+
 @app.route('/menus/<path:filename>')
 def serve_menu(filename):
     return send_from_directory('static/menus', filename)
@@ -1145,6 +1146,20 @@ def test_sms_simple():
         </body>
     </html>
     """
+
+@app.route('/')
+def serve_react_app():
+    return send_from_directory('static/react', 'index.html')
+
+@app.route('/<path:path>')
+def serve_react_files(path):
+    if path.startswith('api/'):
+        # This will be handled by your existing API routes
+        return {"error": "API endpoint not found"}, 404
+    try:
+        return send_from_directory('static/react', path)
+    except Exception:
+        return send_from_directory('static/react', 'index.html')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
