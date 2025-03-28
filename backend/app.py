@@ -1153,10 +1153,9 @@ def serve_react_app():
 
 @app.route('/static/<path:path>')
 def serve_static(path):
-    try:
+    if path.startswith('css/') or path.startswith('js/') or path.startswith('media/'):
         return send_from_directory('static/react/static', path)
-    except:
-        return send_from_directory('static/react', path)
+    return send_from_directory('static/react', path)
 
 
 
