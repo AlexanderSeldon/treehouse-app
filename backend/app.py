@@ -1194,6 +1194,16 @@ def debug_files():
     
     return jsonify(result)
 
+@app.route('/debug-html')
+def debug_html():
+    import os
+    try:
+        with open('static/react/index.html', 'r') as f:
+            html_content = f.read()
+        return html_content
+    except Exception as e:
+        return str(e)
+
 @app.route('/<path:path>')
 def serve_react_files(path):
     if path.startswith('api/'):
