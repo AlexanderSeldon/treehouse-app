@@ -1151,12 +1151,21 @@ def test_sms_simple():
 def serve_react_app():
     return send_from_directory('static/react', 'index.html')
 
+@app.route('/static/css/<path:filename>')
+def serve_css(filename):
+    return send_from_directory('static/react/static/css', filename)
+
+@app.route('/static/js/<path:filename>')
+def serve_js(filename):
+    return send_from_directory('static/react/static/js', filename)
+
+@app.route('/static/media/<path:filename>')
+def serve_media(filename):
+    return send_from_directory('static/react/static/media', filename)
+
 @app.route('/static/<path:path>')
 def serve_static(path):
-    if path.startswith('css/') or path.startswith('js/') or path.startswith('media/'):
-        return send_from_directory('static/react/static', path)
     return send_from_directory('static/react', path)
-
 
 
 @app.route('/debug-files')
