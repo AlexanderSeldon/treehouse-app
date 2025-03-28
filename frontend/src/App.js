@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import './App.css';
-import RestaurantsSection from './RestaurantsSection';
 import TextOrderingSection from './TextOrderingSection';
 import Logo from './Logo';
 import frontpageImage from './assets/frontpage.jpg';
