@@ -45,7 +45,7 @@ function TextOrderingSection() {
              display: 'inline-block',
              maxWidth: '80%'
            }}>
-             <p style={{margin: '0', fontSize: '15px'}}>TreeHouse Restaurant Options:</p>
+             <p style={{margin: '0', fontSize: '15px'}}>Restaurant Options:</p>
              <p style={{margin: '5px 0 0 0', fontSize: '14px'}}>1. Chick-fil-A</p>
              <p style={{margin: '5px 0 0 0', fontSize: '14px'}}>2. Panda Express</p>
              <p style={{margin: '5px 0 0 0', fontSize: '14px'}}>3. Subway</p>
