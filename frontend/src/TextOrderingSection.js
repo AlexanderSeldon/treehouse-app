@@ -160,7 +160,7 @@ function TextOrderingSection() {
        border: '1px solid #ddd',
      }}>
        <p style={{margin: '0', textAlign: 'center', fontWeight: 'bold'}}>
-         Remember: Order by :25-:30 of each hour to get your food at the top of the next hour
+         Remember: You have to order at the 25-30 minute mark of each hour to get your food at the top of the next hour
        </p>
      </div>
    </section>
