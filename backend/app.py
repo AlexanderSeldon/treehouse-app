@@ -1166,6 +1166,34 @@ def serve_static(path):
         except:
             return send_from_directory('static/react', path)
 
+
+
+@app.route('/debug-files')
+def debug_files():
+    import os
+    result = {
+        'cwd': os.getcwd(),
+        'files': {}
+    }
+    
+    # Check existence of directories
+    paths = [
+        '.',
+        'static',
+        'static/react', 
+        'static/react/static', 
+        'static/react/static/js',
+        'static/react/static/css'
+    ]
+    
+    for path in paths:
+        if os.path.exists(path):
+            result['files'][path] = os.listdir(path)
+        else:
+            result['files'][path] = f"Directory does not exist: {path}"
+    
+    return jsonify(result)
+
 @app.route('/<path:path>')
 def serve_react_files(path):
     if path.startswith('api/'):
