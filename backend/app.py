@@ -1196,6 +1196,10 @@ def debug_html():
     except Exception as e:
         return str(e)
 
+@app.route('/debug-test')
+def debug_test():
+    return "This is a test endpoint"
+
 @app.route('/<path:path>')
 def serve_react_files(path):
     if path.startswith('api/'):
