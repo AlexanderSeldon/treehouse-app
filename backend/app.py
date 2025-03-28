@@ -1151,6 +1151,10 @@ def test_sms_simple():
 def serve_react_app():
     return send_from_directory('static/react', 'index.html')
 
+@app.route('/static/<path:path>')
+def serve_static(path):
+    return send_from_directory('static/react/static', path)
+
 @app.route('/<path:path>')
 def serve_react_files(path):
     if path.startswith('api/'):
