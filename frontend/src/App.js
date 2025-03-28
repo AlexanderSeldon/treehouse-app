@@ -72,18 +72,26 @@ function App() {
   return (
     <div className="App">
       <header style={{padding: '15px 0', borderBottom: '1px solid #eee', position: 'fixed', width: '100%', backgroundColor: 'white', zIndex: 100}}>
-        <div style={{display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '1200px', margin: '0 auto', padding: '0 20px', alignItems: 'center'}}>
-        <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-  <Logo />
-</div>
-<button 
-  style={{background: '#1B4332', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
-  onClick={scrollToHowItWorks}
->
-  How It Works
-</button>
-        </div>
-      </header>
+  <div style={{display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '1200px', margin: '0 auto', padding: '0 10px', alignItems: 'center'}}>
+    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+      <Logo />
+    </div>
+    <button 
+      style={{
+        background: '#1B4332', 
+        color: 'white', 
+        padding: '8px 16px', 
+        border: 'none', 
+        borderRadius: '4px', 
+        cursor: 'pointer',
+        marginRight: '5px'
+      }}
+      onClick={scrollToHowItWorks}
+    >
+      How It Works
+    </button>
+  </div>
+</header>
       
       <main style={{padding: '20px', paddingTop: '150px', maxWidth: '1200px', margin: '0 auto'}}>
         <section style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '40px', marginBottom: '50px'}}>
@@ -160,7 +168,11 @@ function App() {
         <section style={{marginBottom: '50px', padding: '40px 20px', borderRadius: '10px', border: '1px solid #eee'}}>
           <h2 style={{fontSize: '28px', textAlign: 'center', marginBottom: '30px'}}>Restaurant Menus</h2>
           
-          <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px'}}>
+          <div style={{
+  display: 'grid', 
+  gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', 
+  gap: '15px'
+}}>
             {/* Chick-fil-A */}
             <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
               <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Chick-fil-A</h3>
