@@ -25,7 +25,7 @@ function App() {
     }
     
     try {
-      const response = await fetch('http://localhost:5001/api/signup', {
+      const response = await fetch('/api/signup', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -77,19 +77,19 @@ function App() {
       <Logo />
     </div>
     <button 
-      style={{
-        background: '#1B4332', 
-        color: 'white', 
-        padding: '8px 16px', 
-        border: 'none', 
-        borderRadius: '4px', 
-        cursor: 'pointer',
-        marginRight: '5px'
-      }}
-      onClick={scrollToHowItWorks}
-    >
-      How It Works
-    </button>
+  style={{
+    background: '#1B4332', 
+    color: 'white', 
+    padding: '8px 16px', 
+    border: 'none', 
+    borderRadius: '4px', 
+    cursor: 'pointer',
+    marginRight: '15px'  // Increase from 5px to 15px
+  }}
+  onClick={scrollToHowItWorks}
+>
+  How It Works
+</button>
   </div>
 </header>
       
@@ -137,183 +137,35 @@ function App() {
   justifyContent: 'center', 
   alignItems: 'center',
   padding: '10px',
-  height: '100%' // Take full height of parent
+  height: 'auto', // Change from fixed height to auto
+  width: '100%'
 }}>
   <div style={{
     width: '100%',
     maxWidth: '450px',
-    height: '450px', // Set a specific height to make it taller
+    // Remove fixed height and use aspect ratio instead
+    aspectRatio: '1/1', // This maintains a square shape
     border: '3px solid #1B4332', 
     borderRadius: '12px',
     padding: '4px',
     boxShadow: '0 6px 15px rgba(0, 0, 0, 0.15)',
     background: 'white',
+    overflow: 'hidden' // Ensure image doesn't overflow container
   }}>
     <img 
       src={frontpageImage}
       alt="TreeHouse Food Delivery"
       style={{
         width: '100%',
-        height: '100%', // Fill the entire container
+        height: '100%',
         borderRadius: '8px',
         objectFit: 'cover',
-        // aspectRatio removed to allow custom height
       }}
     />
   </div>
 </div>
         </section>
         
-        {/* Restaurant Links Section */}
-        <section style={{marginBottom: '50px', padding: '40px 20px', borderRadius: '10px', border: '1px solid #eee'}}>
-          <h2 style={{fontSize: '28px', textAlign: 'center', marginBottom: '30px'}}>Restaurant Menus</h2>
-          
-          <div style={{
-  display: 'grid', 
-  gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', 
-  gap: '15px'
-}}>
-            {/* Chick-fil-A */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Chick-fil-A</h3>
-              <a href="https://order.chick-fil-a.com/menu" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Panda Express */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Panda Express</h3>
-              <a href="https://www.pandaexpress.com/location/roosevelt-canal-px/menu" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Subway */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Subway</h3>
-              <a href="https://restaurants.subway.com/united-states/il/chicago/750-s-halsted-st?utm_source=yxt-goog&utm_medium=local&utm_term=acq&utm_content=26444&utm_campaign=evergreen-2020&y_source=1_MTQ5MTY3OTItNzE1LWxvY2F0aW9uLndlYnNpdGU%3D" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Jim's Original */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Jim's Original</h3>
-              <a href="http://www.jimsoriginal.com/" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Al's Beef */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Al's Beef</h3>
-              <a href="https://www.alsbeef.com/chicago-little-italy-taylor-street" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Busy Burger */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Busy Burger</h3>
-              <a href="https://www.busyburger.com/menus" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Portillo's */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Portillo's</h3>
-              <a href="https://order.portillos.com/menu/portillos-hot-dogs-chicago/" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Chipotle */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Chipotle</h3>
-              <a href="https://locations.chipotle.com/il/chicago/1132-s-clinton-st?utm_source=google&utm_medium=yext&utm_campaign=yext_listings" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Dunkin */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Dunkin</h3>
-              <a href="https://locations.dunkindonuts.com/en/il/chicago/750-s-halsted-st-university/349361?utm_source=google&utm_medium=local&utm_campaign=localmaps&utm_content=349361&y_source=1_MTIxMTQ3NTktNzE1LWxvY2F0aW9uLndlYnNpdGU%3D" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Au Bon Pain */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Au Bon Pain</h3>
-              <a href="https://www.aubonpain.com/menu" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Thai Bowl */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Thai Bowl</h3>
-              <a href="http://places.singleplatform.com/thai-bowl-2/menu?ref=google" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Mario's Italian Ice */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Mario's Italian Ice</h3>
-              <a href="http://www.marioslemonade.com/menu" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Gather Tea Bar */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Gather Tea Bar</h3>
-              <a href="http://www.gathersteabar.com/" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-            
-            {/* Lulu's Hot Dogs */}
-            <div style={{padding: '20px', borderRadius: '8px', border: '1px solid #ddd', textAlign: 'center'}}>
-              <h3 style={{color: '#1B4332', marginBottom: '10px'}}>Lulu's Hot Dogs</h3>
-              <a href="http://lulushotdogs.com/" target="_blank" rel="noopener noreferrer" 
-                 style={{display: 'inline-block', padding: '8px 16px', background: '#1B4332', color: 'white', 
-                        textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold'}}>
-                View Menu
-              </a>
-            </div>
-          </div>
-        </section>
         
         {/* Add the TextOrderingSection component here */}
         <TextOrderingSection />
@@ -332,15 +184,15 @@ function App() {
               <div>
                 <h3 style={{fontSize: '22px', color: '#1B4332', marginBottom: '10px'}}>Ordering Process:</h3>
                 <ol style={{textAlign: 'left', maxWidth: '400px', margin: '0 auto', lineHeight: '1.6'}}>
-                  <li>Browse restaurant menus on our website</li>
-                  <li>Text us your order details</li>
+                  <li>We text you the list of restaurants and their menus</li>
+                  <li>Yout text us your order details</li>
                   <li>We send a payment link (you enter menu price, we add delivery fee)</li>
                 </ol>
               </div>
               
               <div>
                 <h3 style={{fontSize: '22px', color: '#1B4332', marginBottom: '10px'}}>3. Pick up from a host in your dorm</h3>
-                <p>A TreeHouse host in your building will have your food. All orders are sealed by the restaurant before delivery.</p>
+                <p>A TreeHouse host in your building will have your food at their dorm room/unit. All orders are sealed by us before delivery.</p>
               </div>
               
               <div>
