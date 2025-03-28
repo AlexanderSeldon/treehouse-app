@@ -182,7 +182,7 @@ function App() {
               </div>
               
               <div>
-                <h3 style={{fontSize: '22px', color: '#1B4332', marginBottom: '10px'}}>Ordering Process:</h3>
+                <h3 style={{fontSize: '22px', color: '#1B4332', marginBottom: '10px'}}>2. Ordering Process:</h3>
                 <ol style={{textAlign: 'left', maxWidth: '400px', margin: '0 auto', lineHeight: '1.6'}}>
                   <li>We text you the list of restaurants and their menus</li>
                   <li>Yout text us your order details</li>
