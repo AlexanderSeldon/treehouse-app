@@ -1106,138 +1106,140 @@ def test_sms_simple():
         # Generate a payment link - either real Stripe or simulation
         import datetime as dt
         payment_session_id = f"pay_{clean_phone}_{int(dt.datetime.now().timestamp())}"
-    # If Stripe is configured, create a real checkout session for testing
-    if stripe_secret_key:
-        try:
-            # Create an actual Stripe checkout session
-            checkout_session = stripe.checkout.Session.create(
-                payment_method_types=['card'],
-                line_items=[
-                    {
-                        'price_data': {
-                            'currency': 'usd',
-                            'product_data': {
-                                'name': 'TreeHouse Delivery Fee',
+        payment_link = ""
+        
+        # If Stripe is configured, create a real checkout session for testing
+        if stripe_secret_key:
+            try:
+                # Create an actual Stripe checkout session
+                checkout_session = stripe.checkout.Session.create(
+                    payment_method_types=['card'],
+                    line_items=[
+                        {
+                            'price_data': {
+                                'currency': 'usd',
+                                'product_data': {
+                                    'name': 'TreeHouse Delivery Fee',
+                                },
+                                'unit_amount': 300,  # $3.00
                             },
-                            'unit_amount': 300,  # $3.00
+                            'quantity': 1,
                         },
-                        'quantity': 1,
-                    },
-                    {
-                        'price_data': {
-                            'currency': 'usd',
-                            'product_data': {
-                                'name': 'Food Order (Test)',
+                        {
+                            'price_data': {
+                                'currency': 'usd',
+                                'product_data': {
+                                    'name': 'Food Order (Test)',
+                                },
+                                'unit_amount': 0,
+                                'custom_unit_amount': {
+                                    'enabled': True,
+                                    'minimum': 100,  # $1.00
+                                    'maximum': 50000,  # $500.00
+                                },
                             },
-                            'unit_amount': 0,
-                            'custom_unit_amount': {
-                                'enabled': True,
-                                'minimum': 100,  # $1.00
-                                'maximum': 50000,  # $500.00
-                            },
+                            'quantity': 1,
                         },
-                        'quantity': 1,
+                    ],
+                    mode='payment',
+                    success_url=request.base_url + '?result=success&session_id={CHECKOUT_SESSION_ID}',
+                    cancel_url=request.base_url + '?result=cancel',
+                    metadata={
+                        'phone_number': clean_phone,
+                        'test': 'true',
+                        'user_id': str(user_id),
                     },
-                ],
-                mode='payment',
-                success_url=request.base_url + '?result=success&session_id={CHECKOUT_SESSION_ID}',
-                cancel_url=request.base_url + '?result=cancel',
-                metadata={
-                    'phone_number': clean_phone,
-                    'test': 'true',
-                    'user_id': str(user_id),
-                },
-            )
-            
-            payment_session_id = checkout_session.id
-            payment_link = checkout_session.url
-            html_response += "<p><strong>Real Stripe Checkout Created!</strong></p>"
-            
-        except Exception as e:
-            logger.error(f"Error creating test Stripe session: {e}")
+                )
+                
+                payment_session_id = checkout_session.id
+                payment_link = checkout_session.url
+                html_response += "<p><strong>Real Stripe Checkout Created!</strong></p>"
+                
+            except Exception as e:
+                logger.error(f"Error creating test Stripe session: {e}")
+                payment_link = f"https://checkout.stripe.com/pay/test_{payment_session_id}"
+                html_response += f"<p><strong>Error creating Stripe session:</strong> {str(e)}</p>"
+                html_response += "<p>Using simulation instead.</p>"
+        else:
+            # Use a simulation
             payment_link = f"https://checkout.stripe.com/pay/test_{payment_session_id}"
-            html_response += f"<p><strong>Error creating Stripe session:</strong> {str(e)}</p>"
-            html_response += "<p>Using simulation instead.</p>"
-    else:
-        # Use a simulation
-        payment_link = f"https://checkout.stripe.com/pay/test_{payment_session_id}"
-        html_response += "<p>Stripe not configured. Using simulation.</p>"
-    
-    # Store or update in active session
-    if clean_phone not in active_sessions:
-        active_sessions[clean_phone] = {
-            'user_id': user_id,
-            'payment_session_id': payment_session_id,
-            'started_at': dt.datetime.now()
-        }
-        html_response += "<p>No active order found, but still generating payment link.</p>"
-    else:
-        active_sessions[clean_phone]['payment_session_id'] = payment_session_id
-        order_text = active_sessions[clean_phone].get('order_text')
-        if order_text:
-            html_response += f"<p><strong>Your order:</strong> {order_text}</p>"
-    
-    html_response += f"<p><strong>Payment Link:</strong> <a href='{payment_link}' target='_blank'>{payment_link}</a></p>"
-    html_response += "<p>The $3 delivery fee is automatically included. Please enter the exact price of your food order only.</p>"
-    
-    # If Stripe is not configured, show a visual simulation
-    if not stripe_secret_key:
-        html_response += """
-        <div id="stripeSimulator" style="margin-top:20px; padding:20px; border:1px solid #ccc; border-radius:8px; background-color:#f8f9fa;">
-            <h3 style="margin-top:0;">Stripe Checkout Simulation</h3>
-            <div style="background-color:#fff; border:1px solid #eee; border-radius:4px; padding:15px; margin-bottom:15px;">
-                <div style="margin-bottom:10px; font-weight:bold;">TreeHouse Food Delivery</div>
-                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                    <div>Delivery Fee</div>
-                    <div>$3.00</div>
+            html_response += "<p>Stripe not configured. Using simulation.</p>"
+        
+        # Store or update in active session
+        if clean_phone not in active_sessions:
+            active_sessions[clean_phone] = {
+                'user_id': user_id,
+                'payment_session_id': payment_session_id,
+                'started_at': dt.datetime.now()
+            }
+            html_response += "<p>No active order found, but still generating payment link.</p>"
+        else:
+            active_sessions[clean_phone]['payment_session_id'] = payment_session_id
+            order_text = active_sessions[clean_phone].get('order_text')
+            if order_text:
+                html_response += f"<p><strong>Your order:</strong> {order_text}</p>"
+        
+        html_response += f"<p><strong>Payment Link:</strong> <a href='{payment_link}' target='_blank'>{payment_link}</a></p>"
+        html_response += "<p>The $3 delivery fee is automatically included. Please enter the exact price of your food order only.</p>"
+        
+        # If Stripe is not configured, show a visual simulation
+        if not stripe_secret_key:
+            html_response += """
+            <div id="stripeSimulator" style="margin-top:20px; padding:20px; border:1px solid #ccc; border-radius:8px; background-color:#f8f9fa;">
+                <h3 style="margin-top:0;">Stripe Checkout Simulation</h3>
+                <div style="background-color:#fff; border:1px solid #eee; border-radius:4px; padding:15px; margin-bottom:15px;">
+                    <div style="margin-bottom:10px; font-weight:bold;">TreeHouse Food Delivery</div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                        <div>Delivery Fee</div>
+                        <div>$3.00</div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+                        <div>Food Order</div>
+                        <div><input type="number" id="orderAmount" min="1" step="0.01" value="15.00" style="width:70px; text-align:right;"></div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; padding-top:10px; border-top:1px solid #eee; font-weight:bold;">
+                        <div>Total</div>
+                        <div id="totalAmount">$18.00</div>
+                    </div>
                 </div>
-                <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
-                    <div>Food Order</div>
-                    <div><input type="number" id="orderAmount" min="1" step="0.01" value="15.00" style="width:70px; text-align:right;"></div>
-                </div>
-                <div style="display:flex; justify-content:space-between; padding-top:10px; border-top:1px solid #eee; font-weight:bold;">
-                    <div>Total</div>
-                    <div id="totalAmount">$18.00</div>
-                </div>
+                <button onclick="simulatePayment()" style="background-color:#5469d4; color:white; border:none; padding:10px 15px; border-radius:4px; cursor:pointer;">Pay</button>
             </div>
-            <button onclick="simulatePayment()" style="background-color:#5469d4; color:white; border:none; padding:10px 15px; border-radius:4px; cursor:pointer;">Pay</button>
-        </div>
+            
+            <script>
+            function updateTotal() {
+                const orderAmount = parseFloat(document.getElementById('orderAmount').value) || 0;
+                const total = (orderAmount + 3).toFixed(2);
+                document.getElementById('totalAmount').innerText = '$' + total;
+            }
+            
+            document.getElementById('orderAmount').addEventListener('input', updateTotal);
+            
+            function simulatePayment() {
+                const total = parseFloat(document.getElementById('orderAmount').value) + 3;
+                alert('Payment simulation: $' + total.toFixed(2) + ' would be charged to your card.\\n\\nIn the real system, this would trigger a webhook that notifies both you and the TreeHouse team about your successful payment.');
+                window.location.href = window.location.href + '?result=success&simulation=true';
+            }
+            </script>
+            """
         
-        <script>
-        function updateTotal() {
-            const orderAmount = parseFloat(document.getElementById('orderAmount').value) || 0;
-            const total = (orderAmount + 3).toFixed(2);
-            document.getElementById('totalAmount').innerText = '$' + total;
-        }
+        # Simulate admin notification
+        html_response += "<div style='margin-top: 20px; padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd;'>"
+        html_response += "<p><strong>Admin Notification:</strong></p>"
+        html_response += f"<p>PAYMENT REQUESTED!<br/>Customer: {test_phone}</p>"
         
-        document.getElementById('orderAmount').addEventListener('input', updateTotal);
+        if clean_phone in active_sessions and 'order_text' in active_sessions[clean_phone]:
+            html_response += f"<p>Order: {active_sessions[clean_phone]['order_text']}</p>"
+        else:
+            html_response += "<p>Note: Customer likely called in their order</p>"
         
-        function simulatePayment() {
-            const total = parseFloat(document.getElementById('orderAmount').value) + 3;
-            alert('Payment simulation: $' + total.toFixed(2) + ' would be charged to your card.\\n\\nIn the real system, this would trigger a webhook that notifies both you and the TreeHouse team about your successful payment.');
-            window.location.href = window.location.href + '?result=success&simulation=true';
-        }
-        </script>
-        """
-    
-    # Simulate admin notification
-    html_response += "<div style='margin-top: 20px; padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd;'>"
-    html_response += "<p><strong>Admin Notification:</strong></p>"
-    html_response += f"<p>PAYMENT REQUESTED!<br/>Customer: {test_phone}</p>"
-    
-    if clean_phone in active_sessions and 'order_text' in active_sessions[clean_phone]:
-        html_response += f"<p>Order: {active_sessions[clean_phone]['order_text']}</p>"
-    else:
-        html_response += "<p>Note: Customer likely called in their order</p>"
-    
-    html_response += f"<p>Session ID: {payment_session_id}</p>"
-    html_response += "</div>"
+        html_response += f"<p>Session ID: {payment_session_id}</p>"
+        html_response += "</div>"
     
     # Handle success/cancel redirects
     result = request.args.get('result')
     if result == 'success':
         simulation = request.args.get('simulation', 'false')
-        session_id = request.args.get('session_id', payment_session_id)
+        session_id = request.args.get('session_id', payment_session_id if 'payment_session_id' in locals() else '')
         
         success_html = f"""
         <div style="margin-top: 20px; padding: 20px; background-color: #d4edda; border-radius: 8px; text-align: center;">
