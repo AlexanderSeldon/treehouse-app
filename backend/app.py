@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import sqlite3
+from twilio.twiml.messaging_response import MessagingResponse
 
 
 # Load environment variables
@@ -785,6 +786,9 @@ def sms_webhook():
     
     user_id = user[0]
     
+    # Create a TwiML response
+    resp = MessagingResponse()
+    
     # Process command
     if incoming_message == 'menu' or incoming_message == 'restaurants':
         # Get restaurant data from the frontend links
@@ -813,17 +817,8 @@ def sms_webhook():
         response += "Don't see a restaurant you want? Call (708) 901-1754 to order.\n\n"
         response += "When you're ready to pay, text 'PAY' to get a payment link."
         
-        # Send the restaurant list
-        if client:
-            try:
-                client.messages.create(
-                    body=response,
-                    from_=twilio_phone,
-                    to=from_number
-                )
-                logger.info(f"Sent restaurant list to {from_number}")
-            except Exception as e:
-                logger.error(f"Error sending restaurant list: {e}")
+        resp.message(response)
+        logger.info(f"Sent restaurant list to {from_number} using TwiML")
     
     elif incoming_message.startswith('order ') or incoming_message == 'order':
         # Process order with free-form text
@@ -848,17 +843,8 @@ def sms_webhook():
             response = f"Got it! Your order: {order_text}\n\n"
             response += "Text 'PAY' to receive a payment link. You'll enter the exact amount of your order plus our $2-4 delivery fee."
         
-        # Send the response
-        if client:
-            try:
-                client.messages.create(
-                    body=response,
-                    from_=twilio_phone,
-                    to=from_number
-                )
-                logger.info(f"Processed order request from {from_number}")
-            except Exception as e:
-                logger.error(f"Error processing order: {e}")
+        resp.message(response)
+        logger.info(f"Processed order request from {from_number} using TwiML")
     
     elif incoming_message == 'pay':
         # Generate a payment link
@@ -894,17 +880,12 @@ def sms_webhook():
             order_text = active_sessions[clean_phone].get('order_text', '')
             response += f"\n\nFor reference, your order was: {order_text}"
         
-        # Send the payment link
+        resp.message(response)
+        logger.info(f"Sent payment link to {from_number} using TwiML")
+        
+        # Send notification to admin (using client.messages directly as this is a notification, not a response)
         if client:
             try:
-                client.messages.create(
-                    body=response,
-                    from_=twilio_phone,
-                    to=from_number
-                )
-                logger.info(f"Sent payment link to {from_number}")
-                
-                # Send notification to admin
                 admin_note = f"PAYMENT REQUESTED!\n\n"
                 admin_note += f"Customer: {from_number}\n"
                 if has_active_order:
@@ -917,9 +898,8 @@ def sms_webhook():
                     from_=twilio_phone,
                     to=notification_email
                 )
-                
             except Exception as e:
-                logger.error(f"Error sending payment link: {e}")
+                logger.error(f"Error sending admin notification: {e}")
     
     elif incoming_message in ['help', 'info']:
         # Provide help information
@@ -931,32 +911,18 @@ def sms_webhook():
         response += "• Call (708) 901-1754 for special orders or questions\n\n"
         response += "Food is delivered hourly. Order by :25-:30 of each hour to get your food at the top of the next hour."
         
-        if client:
-            try:
-                client.messages.create(
-                    body=response,
-                    from_=twilio_phone,
-                    to=from_number
-                )
-            except Exception as e:
-                logger.error(f"Error sending help info: {e}")
+        resp.message(response)
+        logger.info(f"Sent help info to {from_number} using TwiML")
     
     else:
         # Handle unknown commands
         response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
         
-        if client:
-            try:
-                client.messages.create(
-                    body=response,
-                    from_=twilio_phone,
-                    to=from_number
-                )
-            except Exception as e:
-                logger.error(f"Error sending unknown command response: {e}")
+        resp.message(response)
+        logger.info(f"Sent unknown command response to {from_number} using TwiML")
     
     conn.close()
-    return str("OK")
+    return str(resp)
 
 @app.route('/test-sms')
 def test_sms_simple():
