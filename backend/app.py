@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import sqlite3
 from twilio.twiml.messaging_response import MessagingResponse
+import stripe
 
 
 # Load environment variables
@@ -155,6 +156,14 @@ if account_sid and auth_token:
         logger.error(f"Error initializing Twilio client: {e}")
 else:
     logger.warning("Twilio credentials not found or incomplete")
+
+# Stripe setup
+stripe_secret_key = os.getenv('STRIPE_SECRET_KEY')
+if stripe_secret_key:
+    stripe.api_key = stripe_secret_key
+    logger.info("Stripe client initialized successfully")
+else:
+    logger.warning("Stripe credentials not found")
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
@@ -847,59 +856,150 @@ def sms_webhook():
         logger.info(f"Processed order request from {from_number} using TwiML")
     
     elif incoming_message == 'pay':
-        # Generate a payment link
-        # This would typically integrate with Stripe or another payment processor
-        # For now, we'll simulate this with a placeholder link
-        
         # Check if they have an active order
         has_active_order = clean_phone in active_sessions
         
-        # Create a payment session even if they don't have an active order
-        # (for cases where they called in their order)
-        import datetime as dt
-        payment_session_id = f"pay_{clean_phone}_{int(dt.datetime.now().timestamp())}"
+        # Default delivery fee (always $3)
+        delivery_fee = 3.00
         
-        # Prepare a fake Stripe payment link (in production, this would be a real Stripe link)
-        payment_link = f"https://your-payment-site.com/pay/{payment_session_id}"
-        
-        # Save the payment session
-        if not has_active_order:
-            active_sessions[clean_phone] = {
-                'user_id': user_id,
-                'payment_session_id': payment_session_id,
-                'started_at': dt.datetime.now()
-            }
-        else:
-            active_sessions[clean_phone]['payment_session_id'] = payment_session_id
-        
-        # Send payment instructions
-        response = "Here's your payment link:\n" + payment_link + "\n\n"
-        response += "Please enter the exact price of your order from the restaurant menu plus our $2-4 delivery fee."
-        
-        if has_active_order:
-            order_text = active_sessions[clean_phone].get('order_text', '')
-            response += f"\n\nFor reference, your order was: {order_text}"
-        
-        resp.message(response)
-        logger.info(f"Sent payment link to {from_number} using TwiML")
-        
-        # Send notification to admin (using client.messages directly as this is a notification, not a response)
-        if client:
+        if stripe_secret_key:
+            # Use Stripe for payment processing
             try:
-                admin_note = f"PAYMENT REQUESTED!\n\n"
-                admin_note += f"Customer: {from_number}\n"
-                if has_active_order:
-                    admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
-                else:
-                    admin_note += "Note: Customer likely called in their order\n"
-                
-                client.messages.create(
-                    body=admin_note,
-                    from_=twilio_phone,
-                    to=notification_email
+                # Create a Stripe Checkout Session with automatic $3 delivery fee
+                checkout_session = stripe.checkout.Session.create(
+                    payment_method_types=['card'],
+                    line_items=[
+                        {
+                            'price_data': {
+                                'currency': 'usd',
+                                'product_data': {
+                                    'name': 'TreeHouse Delivery Fee',
+                                },
+                                'unit_amount': int(delivery_fee * 100),  # Convert to cents
+                            },
+                            'quantity': 1,
+                        },
+                        {
+                            'price_data': {
+                                'currency': 'usd',
+                                'product_data': {
+                                    'name': 'Food Order',
+                                },
+                                'unit_amount': 0,  # Set to 0 initially, customer will adjust
+                                'custom_unit_amount': {
+                                    'enabled': True,
+                                    'minimum': 100,  # Minimum $1.00
+                                    'maximum': 50000,  # Maximum $500.00
+                                },
+                            },
+                            'quantity': 1,
+                        },
+                    ],
+                    mode='payment',
+                    success_url=f'https://treehouseneighbor.com/payment-success?session_id={{CHECKOUT_SESSION_ID}}',
+                    cancel_url='https://treehouseneighbor.com/payment-cancel',
+                    metadata={
+                        'phone_number': clean_phone,
+                        'has_active_order': str(has_active_order),
+                        'user_id': str(user_id),
+                    },
                 )
+                
+                # Store the session ID in the active session
+                payment_session_id = checkout_session.id
+                if not has_active_order:
+                    import datetime as dt
+                    active_sessions[clean_phone] = {
+                        'user_id': user_id,
+                        'payment_session_id': payment_session_id,
+                        'started_at': dt.datetime.now()
+                    }
+                else:
+                    active_sessions[clean_phone]['payment_session_id'] = payment_session_id
+                
+                # Create the payment link
+                payment_link = checkout_session.url
+                
+                # Send payment instructions
+                response = "Here's your payment link:\n" + payment_link + "\n\n"
+                response += "The $3 delivery fee is automatically included. Please enter the exact price of your food order only."
+                
+                if has_active_order:
+                    order_text = active_sessions[clean_phone].get('order_text', '')
+                    response += f"\n\nFor reference, your order was: {order_text}"
+                
+                resp.message(response)
+                logger.info(f"Sent Stripe payment link to {from_number} using TwiML")
+                
+                # Send notification to admin
+                if client:
+                    try:
+                        admin_note = f"PAYMENT REQUESTED!\n\n"
+                        admin_note += f"Customer: {from_number}\n"
+                        if has_active_order:
+                            admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
+                        else:
+                            admin_note += "Note: Customer likely called in their order\n"
+                        admin_note += f"Stripe Session ID: {payment_session_id}"
+                        
+                        client.messages.create(
+                            body=admin_note,
+                            from_=twilio_phone,
+                            to=notification_email
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending admin notification: {e}")
+                        
             except Exception as e:
-                logger.error(f"Error sending admin notification: {e}")
+                logger.error(f"Error creating Stripe session: {e}")
+                response = "Sorry, there was an error generating your payment link. Please try again or call (708) 901-1754 for assistance."
+                resp.message(response)
+        else:
+            # Fallback to the placeholder payment link if Stripe is not configured
+            import datetime as dt
+            payment_session_id = f"pay_{clean_phone}_{int(dt.datetime.now().timestamp())}"
+            
+            # Prepare a fake payment link as fallback
+            payment_link = f"https://treehouseneighbor.com/pay/{payment_session_id}"
+            
+            # Save the payment session
+            if not has_active_order:
+                active_sessions[clean_phone] = {
+                    'user_id': user_id,
+                    'payment_session_id': payment_session_id,
+                    'started_at': dt.datetime.now()
+                }
+            else:
+                active_sessions[clean_phone]['payment_session_id'] = payment_session_id
+            
+            # Send payment instructions
+            response = "Here's your payment link:\n" + payment_link + "\n\n"
+            response += "Please enter the exact price of your order from the restaurant menu. The $3 delivery fee is automatically added."
+            
+            if has_active_order:
+                order_text = active_sessions[clean_phone].get('order_text', '')
+                response += f"\n\nFor reference, your order was: {order_text}"
+            
+            resp.message(response)
+            logger.info(f"Sent placeholder payment link to {from_number} using TwiML (Stripe not configured)")
+            
+            # Send notification to admin
+            if client:
+                try:
+                    admin_note = f"PAYMENT REQUESTED!\n\n"
+                    admin_note += f"Customer: {from_number}\n"
+                    if has_active_order:
+                        admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
+                    else:
+                        admin_note += "Note: Customer likely called in their order\n"
+                    
+                    client.messages.create(
+                        body=admin_note,
+                        from_=twilio_phone,
+                        to=notification_email
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending admin notification: {e}")
     
     elif incoming_message in ['help', 'info']:
         # Provide help information
@@ -1003,39 +1103,159 @@ def test_sms_simple():
         html_response += "<p>For example: 'ORDER 2 burritos from Chipotle with guac and chips'</p>"
     
     elif test_message.lower() == 'pay':
-        # Generate a payment link
+        # Generate a payment link - either real Stripe or simulation
         import datetime as dt
         payment_session_id = f"pay_{clean_phone}_{int(dt.datetime.now().timestamp())}"
-        payment_link = f"https://your-payment-site.com/pay/{payment_session_id}"
+    # If Stripe is configured, create a real checkout session for testing
+    if stripe_secret_key:
+        try:
+            # Create an actual Stripe checkout session
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=['card'],
+                line_items=[
+                    {
+                        'price_data': {
+                            'currency': 'usd',
+                            'product_data': {
+                                'name': 'TreeHouse Delivery Fee',
+                            },
+                            'unit_amount': 300,  # $3.00
+                        },
+                        'quantity': 1,
+                    },
+                    {
+                        'price_data': {
+                            'currency': 'usd',
+                            'product_data': {
+                                'name': 'Food Order (Test)',
+                            },
+                            'unit_amount': 0,
+                            'custom_unit_amount': {
+                                'enabled': True,
+                                'minimum': 100,  # $1.00
+                                'maximum': 50000,  # $500.00
+                            },
+                        },
+                        'quantity': 1,
+                    },
+                ],
+                mode='payment',
+                success_url=request.base_url + '?result=success&session_id={CHECKOUT_SESSION_ID}',
+                cancel_url=request.base_url + '?result=cancel',
+                metadata={
+                    'phone_number': clean_phone,
+                    'test': 'true',
+                    'user_id': str(user_id),
+                },
+            )
+            
+            payment_session_id = checkout_session.id
+            payment_link = checkout_session.url
+            html_response += "<p><strong>Real Stripe Checkout Created!</strong></p>"
+            
+        except Exception as e:
+            logger.error(f"Error creating test Stripe session: {e}")
+            payment_link = f"https://checkout.stripe.com/pay/test_{payment_session_id}"
+            html_response += f"<p><strong>Error creating Stripe session:</strong> {str(e)}</p>"
+            html_response += "<p>Using simulation instead.</p>"
+    else:
+        # Use a simulation
+        payment_link = f"https://checkout.stripe.com/pay/test_{payment_session_id}"
+        html_response += "<p>Stripe not configured. Using simulation.</p>"
+    
+    # Store or update in active session
+    if clean_phone not in active_sessions:
+        active_sessions[clean_phone] = {
+            'user_id': user_id,
+            'payment_session_id': payment_session_id,
+            'started_at': dt.datetime.now()
+        }
+        html_response += "<p>No active order found, but still generating payment link.</p>"
+    else:
+        active_sessions[clean_phone]['payment_session_id'] = payment_session_id
+        order_text = active_sessions[clean_phone].get('order_text')
+        if order_text:
+            html_response += f"<p><strong>Your order:</strong> {order_text}</p>"
+    
+    html_response += f"<p><strong>Payment Link:</strong> <a href='{payment_link}' target='_blank'>{payment_link}</a></p>"
+    html_response += "<p>The $3 delivery fee is automatically included. Please enter the exact price of your food order only.</p>"
+    
+    # If Stripe is not configured, show a visual simulation
+    if not stripe_secret_key:
+        html_response += """
+        <div id="stripeSimulator" style="margin-top:20px; padding:20px; border:1px solid #ccc; border-radius:8px; background-color:#f8f9fa;">
+            <h3 style="margin-top:0;">Stripe Checkout Simulation</h3>
+            <div style="background-color:#fff; border:1px solid #eee; border-radius:4px; padding:15px; margin-bottom:15px;">
+                <div style="margin-bottom:10px; font-weight:bold;">TreeHouse Food Delivery</div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                    <div>Delivery Fee</div>
+                    <div>$3.00</div>
+                </div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+                    <div>Food Order</div>
+                    <div><input type="number" id="orderAmount" min="1" step="0.01" value="15.00" style="width:70px; text-align:right;"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; padding-top:10px; border-top:1px solid #eee; font-weight:bold;">
+                    <div>Total</div>
+                    <div id="totalAmount">$18.00</div>
+                </div>
+            </div>
+            <button onclick="simulatePayment()" style="background-color:#5469d4; color:white; border:none; padding:10px 15px; border-radius:4px; cursor:pointer;">Pay</button>
+        </div>
         
-        # Store or update in active session
-        if clean_phone not in active_sessions:
-            active_sessions[clean_phone] = {
-                'user_id': user_id,
-                'payment_session_id': payment_session_id,
-                'started_at': dt.datetime.now()
-            }
-            html_response += "<p>No active order found, but still generating payment link.</p>"
-        else:
-            active_sessions[clean_phone]['payment_session_id'] = payment_session_id
-            order_text = active_sessions[clean_phone].get('order_text')
-            if order_text:
-                html_response += f"<p><strong>Your order:</strong> {order_text}</p>"
+        <script>
+        function updateTotal() {
+            const orderAmount = parseFloat(document.getElementById('orderAmount').value) || 0;
+            const total = (orderAmount + 3).toFixed(2);
+            document.getElementById('totalAmount').innerText = '$' + total;
+        }
         
-        html_response += f"<p><strong>Payment Link:</strong> <a href='{payment_link}' target='_blank'>{payment_link}</a></p>"
-        html_response += "<p>Please enter the exact price of your order from the restaurant menu plus our $2-4 delivery fee.</p>"
+        document.getElementById('orderAmount').addEventListener('input', updateTotal);
         
-        # Simulate admin notification
-        html_response += "<div style='margin-top: 20px; padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd;'>"
-        html_response += "<p><strong>Admin Notification:</strong></p>"
-        html_response += f"<p>PAYMENT REQUESTED!<br/>Customer: {test_phone}</p>"
+        function simulatePayment() {
+            const total = parseFloat(document.getElementById('orderAmount').value) + 3;
+            alert('Payment simulation: $' + total.toFixed(2) + ' would be charged to your card.\\n\\nIn the real system, this would trigger a webhook that notifies both you and the TreeHouse team about your successful payment.');
+            window.location.href = window.location.href + '?result=success&simulation=true';
+        }
+        </script>
+        """
+    
+    # Simulate admin notification
+    html_response += "<div style='margin-top: 20px; padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd;'>"
+    html_response += "<p><strong>Admin Notification:</strong></p>"
+    html_response += f"<p>PAYMENT REQUESTED!<br/>Customer: {test_phone}</p>"
+    
+    if clean_phone in active_sessions and 'order_text' in active_sessions[clean_phone]:
+        html_response += f"<p>Order: {active_sessions[clean_phone]['order_text']}</p>"
+    else:
+        html_response += "<p>Note: Customer likely called in their order</p>"
+    
+    html_response += f"<p>Session ID: {payment_session_id}</p>"
+    html_response += "</div>"
+    
+    # Handle success/cancel redirects
+    result = request.args.get('result')
+    if result == 'success':
+        simulation = request.args.get('simulation', 'false')
+        session_id = request.args.get('session_id', payment_session_id)
         
-        if clean_phone in active_sessions and 'order_text' in active_sessions[clean_phone]:
-            html_response += f"<p>Order: {active_sessions[clean_phone]['order_text']}</p>"
-        else:
-            html_response += "<p>Note: Customer likely called in their order</p>"
-        
-        html_response += "</div>"
+        success_html = f"""
+        <div style="margin-top: 20px; padding: 20px; background-color: #d4edda; border-radius: 8px; text-align: center;">
+            <h3 style="color: #155724; margin-top:0;">Payment Successful!</h3>
+            <p>Your order has been processed. You would receive a text confirmation shortly.</p>
+            <p>Session ID: {session_id}</p>
+            <p>{'(Simulated payment)' if simulation == 'true' else ''}</p>
+        </div>
+        """
+        html_response += success_html
+    elif result == 'cancel':
+        cancel_html = """
+        <div style="margin-top: 20px; padding: 20px; background-color: #f8d7da; border-radius: 8px; text-align: center;">
+            <h3 style="color: #721c24; margin-top:0;">Payment Cancelled</h3>
+            <p>Your payment was cancelled. You would need to text PAY again to get a new payment link.</p>
+        </div>
+        """
+        html_response += cancel_html
     
     elif test_message.lower() in ['help', 'info']:
         html_response += "<p><strong>TreeHouse Help</strong></p>"
@@ -1112,6 +1332,135 @@ def test_sms_simple():
         </body>
     </html>
     """
+
+
+
+@app.route('/payment-success')
+def payment_success():
+    session_id = request.args.get('session_id')
+    return f"""
+    <html>
+        <head>
+            <title>Payment Successful</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .success {{ background: #e9f7ef; padding: 20px; border-radius: 8px; text-align: center; }}
+                h1 {{ color: #1B4332; }}
+            </style>
+        </head>
+        <body>
+            <div class="success">
+                <h1>Payment Successful!</h1>
+                <p>Your order has been processed. You will receive a text confirmation shortly.</p>
+                <p>Thank you for ordering with TreeHouse!</p>
+                <p><a href="https://treehouseneighbor.com">Return to TreeHouse</a></p>
+            </div>
+        </body>
+    </html>
+    """
+
+@app.route('/payment-cancel')
+def payment_cancel():
+    return f"""
+    <html>
+        <head>
+            <title>Payment Cancelled</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .cancel {{ background: #f8d7da; padding: 20px; border-radius: 8px; text-align: center; }}
+                h1 {{ color: #721c24; }}
+            </style>
+        </head>
+        <body>
+            <div class="cancel">
+                <h1>Payment Cancelled</h1>
+                <p>Your payment was cancelled. If you still want to place an order, please text PAY again.</p>
+                <p>If you need assistance, call (708) 901-1754.</p>
+                <p><a href="https://treehouseneighbor.com">Return to TreeHouse</a></p>
+            </div>
+        </body>
+    </html>
+    """
+
+@app.route('/webhook/stripe', methods=['POST'])
+def stripe_webhook():
+    payload = request.data
+    sig_header = request.headers.get('Stripe-Signature')
+    endpoint_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
+    
+    event = None
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, endpoint_secret
+        )
+    except ValueError as e:
+        # Invalid payload
+        logger.error(f"Invalid Stripe payload: {e}")
+        return jsonify({"error": "Invalid payload"}), 400
+    except stripe.error.SignatureVerificationError as e:
+        # Invalid signature
+        logger.error(f"Invalid Stripe signature: {e}")
+        return jsonify({"error": "Invalid signature"}), 400
+    
+    # Handle the checkout.session.completed event
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        
+        # Extract metadata
+        phone_number = session.get('metadata', {}).get('phone_number')
+        user_id = session.get('metadata', {}).get('user_id')
+        
+        if phone_number and user_id:
+            # Get payment details
+            payment_amount = session.get('amount_total', 0) / 100  # Convert cents to dollars
+            payment_id = session.get('id')
+            
+            # Record payment in database
+            try:
+                conn = sqlite3.connect('treehouse.db')
+                c = conn.cursor()
+                
+                # Create a record in your payments table
+                c.execute(
+                    "INSERT INTO payments (order_id, amount, payment_method, transaction_id, status) VALUES (?, ?, ?, ?, ?)",
+                    (0, payment_amount, "stripe", payment_id, "completed")
+                )
+                
+                conn.commit()
+                conn.close()
+                logger.info(f"Payment recorded for user_id {user_id}, amount ${payment_amount}")
+                
+                # Notify the user about successful payment
+                if client:
+                    try:
+                        message = client.messages.create(
+                            body=f"Payment received! Amount: ${payment_amount:.2f}. Your order will be delivered soon.",
+                            from_=twilio_phone,
+                            to=f"+{phone_number}"
+                        )
+                        logger.info(f"Payment confirmation sent to +{phone_number}")
+                    except Exception as e:
+                        logger.error(f"Error sending payment confirmation: {e}")
+                
+                # Notify admin about payment
+                if client:
+                    try:
+                        client.messages.create(
+                            body=f"Payment received! Phone: +{phone_number}, Amount: ${payment_amount:.2f}, Stripe ID: {payment_id}",
+                            from_=twilio_phone,
+                            to=notification_email
+                        )
+                        logger.info(f"Admin payment notification sent")
+                    except Exception as e:
+                        logger.error(f"Error sending admin payment notification: {e}")
+                
+            except Exception as e:
+                logger.error(f"Error recording payment: {e}")
+    
+    return jsonify({"status": "success"}), 200
+
 
 @app.route('/')
 def serve_react_app():
