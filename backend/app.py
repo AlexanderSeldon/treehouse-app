@@ -1125,7 +1125,7 @@ def test_sms_simple():
         {
             'price_data': {
                 'currency': 'usd',
-                'product': 'prod_S4AmnpLNObMYOs',  # Your product ID
+                'product': 'price_1RAFIgAKf1IOilM7UwJ9qO6y',  # Your product ID
                 'custom_unit_amount': {
                     'enabled': True,
                     'minimum': 100,  # Minimum $1.00
