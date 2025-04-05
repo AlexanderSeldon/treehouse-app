@@ -882,7 +882,7 @@ def sms_webhook():
                 )
                 
                 # Create a checkout session with the custom amount price
-                checkout_session = stripe.checkout.sessions.create(
+                checkout_session = stripe.checkout.Session.create(
                     payment_method_types=['card'],
                     line_items=[
                         {
@@ -1128,7 +1128,7 @@ def test_sms_simple():
                 )
                 
                 # Create a checkout session with the custom amount price
-                checkout_session = stripe.checkout.sessions.create(
+                checkout_session = stripe.checkout.Session.create(
                     payment_method_types=['card'],
                     line_items=[
                         {
