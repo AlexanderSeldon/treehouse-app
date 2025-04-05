@@ -853,7 +853,7 @@ def sms_webhook():
             
             # Acknowledge the order
             response = f"Got it! Your order: {order_text}\n\n"
-            response += "Text 'PAY' to receive a payment link. You'll enter only the cost of your food. Our $4 delivery fee will be automatically added."
+            response += "Text 'PAY' to receive a payment link. You'll enter the exact amount of your order plus our $2-4 delivery fee."
         
         resp.message(response)
         logger.info(f"Processed order request from {from_number} using TwiML")
@@ -862,62 +862,38 @@ def sms_webhook():
         # Check if they have an active order
         has_active_order = clean_phone in active_sessions
         
-        # Default delivery fee (now $4)
-        delivery_fee = 4.00
+        # Default delivery fee (always $3)
+        delivery_fee = 3.00
         
         if stripe_secret_key:
-            # Use Stripe for payment processing with Option 2
+            # Use Stripe for payment processing
             try:
-                # Create a product for the combined amount
-                product = stripe.Product.create(
-                    name="TreeHouse Delivery",
-                    description="Food order + delivery fee"
-                )
-                
-                # Create a checkout session with automatic fixed amount + custom amount
+                # Create a Stripe Checkout Session with automatic $3 delivery fee
                 checkout_session = stripe.checkout.Session.create(
                     payment_method_types=['card'],
-                    # No line_items needed with this approach
-                    custom_text={
-                        'submit': {'message': 'Pay for delivery'}
-                    },
-                    # This sets up the custom field for the food amount
-                    custom_fields=[
+                    line_items=[
                         {
-                            'key': 'food_amount',
-                            'label': {
-                                'type': 'custom',
-                                'custom': 'Food order amount ($)'
-                            },
-                            'type': 'numeric',
-                            'numeric': {
-                                'minimum': 1,
-                                'maximum': 500
-                            }
-                        }
-                    ],
-                    # This adds the automatic $4.00 delivery fee
-                    shipping_options=[
-                        {
-                            'shipping_rate_data': {
-                                'display_name': 'TreeHouse Delivery Fee',
-                                'fixed_amount': {
-                                    'amount': int(delivery_fee * 100),  # Convert to cents
-                                    'currency': 'usd'
+                            'price_data': {
+                                'currency': 'usd',
+                                'product_data': {
+                                    'name': 'TreeHouse Delivery Fee',
                                 },
-                                'type': 'fixed_amount'
-                            }
-                        }
+                                'unit_amount': int(delivery_fee * 100),  # Convert to cents
+                            },
+                            'quantity': 1,
+                        },
+                        {
+                            'price_data': {
+                                'currency': 'usd',
+                                'product': 'prod_S4AmnpLNObMYOs',  # Your product ID
+                                'unit_amount': 1000,  # Set a default amount of $10.00 (1000 cents)
+                                'unit_amount_decimal': "1000",  # Same as unit_amount but as a string
+                            },
+                            'quantity': 1,
+                        },
                     ],
                     mode='payment',
-                    # Add after_submit to process the custom_fields
-                    after_submit={
-                        # This clientside JavaScript adds the custom amount to the total
-                        'redirect': {
-                            'url': 'https://treehouseneighbor.com/payment-success?session_id={CHECKOUT_SESSION_ID}'
-                        },
-                    },
-                    success_url='https://treehouseneighbor.com/payment-success?session_id={CHECKOUT_SESSION_ID}',
+                    success_url=f'https://treehouseneighbor.com/payment-success?session_id={{CHECKOUT_SESSION_ID}}',
                     cancel_url='https://treehouseneighbor.com/payment-cancel',
                     metadata={
                         'phone_number': clean_phone,
@@ -943,7 +919,7 @@ def sms_webhook():
                 
                 # Send payment instructions
                 response = "Here's your payment link:\n" + payment_link + "\n\n"
-                response += "The $4 delivery fee is automatically included. Please enter only the cost of your food order."
+                response += "The $3 delivery fee is automatically included. Please enter the exact price of your food order only."
                 
                 if has_active_order:
                     order_text = active_sessions[clean_phone].get('order_text', '')
@@ -995,7 +971,7 @@ def sms_webhook():
             
             # Send payment instructions
             response = "Here's your payment link:\n" + payment_link + "\n\n"
-            response += "Please enter only the price of your food order. The $4 delivery fee is automatically added."
+            response += "Please enter the exact price of your order from the restaurant menu. The $3 delivery fee is automatically added."
             
             if has_active_order:
                 order_text = active_sessions[clean_phone].get('order_text', '')
@@ -1024,7 +1000,7 @@ def sms_webhook():
     
     elif incoming_message in ['help', 'info']:
         # Provide help information
-        response = "TreeHouse - Restaurant delivery for ONLY $4!\n\n"
+        response = "TreeHouse - Restaurant delivery for ONLY $2-4!\n\n"
         response += "Commands:\n"
         response += "• Text 'MENU' to see available restaurants\n"
         response += "• Text 'ORDER' followed by what you want (e.g., 'ORDER 2 burritos from Chipotle')\n"
@@ -1176,13 +1152,6 @@ def test_sms_simple():
                         }
                     ],
                     mode='payment',
-                    # Add after_submit to process the custom_fields
-                    after_submit={
-                        # This clientside JavaScript adds the custom amount to the total
-                        'redirect': {
-                            'url': request.base_url + '?result=success&session_id={CHECKOUT_SESSION_ID}'
-                        },
-                    },
                     success_url=request.base_url + '?result=success&session_id={CHECKOUT_SESSION_ID}',
                     cancel_url=request.base_url + '?result=cancel',
                     metadata={
