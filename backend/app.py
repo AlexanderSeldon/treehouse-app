@@ -867,40 +867,37 @@ def sms_webhook():
             try:
                 # Create a Stripe Checkout Session with automatic $3 delivery fee
                 checkout_session = stripe.checkout.Session.create(
-    payment_method_types=['card'],
-    line_items=[
-        {
-            'price_data': {
-                'currency': 'usd',
-                'product_data': {
-                    'name': 'TreeHouse Delivery Fee',
-                },
-                'unit_amount': int(delivery_fee * 100),  # Convert to cents
-            },
-            'quantity': 1,
-        },
-        {
-            'price_data': {
-                'currency': 'usd',
-                'product': 'prod_S4AmnpLNObMYOs',  # Your product ID
-                'custom_unit_amount': {
-                    'enabled': True,
-                    'minimum': 100,  # Minimum $1.00
-                    'maximum': 50000,  # Maximum $500.00
-                },
-            },
-            'quantity': 1,
-        },
-    ],
-    mode='payment',
-    success_url=f'https://treehouseneighbor.com/payment-success?session_id={{CHECKOUT_SESSION_ID}}',
-    cancel_url='https://treehouseneighbor.com/payment-cancel',
-    metadata={
-        'phone_number': clean_phone,
-        'has_active_order': str(has_active_order),
-        'user_id': str(user_id),
-    },
-)
+                    payment_method_types=['card'],
+                    line_items=[
+                        {
+                            'price_data': {
+                                'currency': 'usd',
+                                'product_data': {
+                                    'name': 'TreeHouse Delivery Fee',
+                                },
+                                'unit_amount': int(delivery_fee * 100),  # Convert to cents
+                            },
+                            'quantity': 1,
+                        },
+                        {
+                            'price_data': {
+                                'currency': 'usd',
+                                'product': 'prod_S4AmnpLNObMYOs',  # Your product ID
+                                'unit_amount': 1000,  # Set a default amount of $10.00 (1000 cents)
+                                'unit_amount_decimal': "1000",  # Same as unit_amount but as a string
+                            },
+                            'quantity': 1,
+                        },
+                    ],
+                    mode='payment',
+                    success_url=f'https://treehouseneighbor.com/payment-success?session_id={{CHECKOUT_SESSION_ID}}',
+                    cancel_url='https://treehouseneighbor.com/payment-cancel',
+                    metadata={
+                        'phone_number': clean_phone,
+                        'has_active_order': str(has_active_order),
+                        'user_id': str(user_id),
+                    },
+                )
                 
                 # Store the session ID in the active session
                 payment_session_id = checkout_session.id
@@ -1110,40 +1107,37 @@ def test_sms_simple():
             try:
                 # Create an actual Stripe checkout session
                 checkout_session = stripe.checkout.Session.create(
-    payment_method_types=['card'],
-    line_items=[
-        {
-            'price_data': {
-                'currency': 'usd',
-                'product_data': {
-                    'name': 'TreeHouse Delivery Fee',
-                },
-                'unit_amount': 300,  # $3.00
-            },
-            'quantity': 1,
-        },
-        {
-            'price_data': {
-                'currency': 'usd',
-                'product': 'price_1RAFIgAKf1IOilM7UwJ9qO6y',  # Your product ID
-                'custom_unit_amount': {
-                    'enabled': True,
-                    'minimum': 100,  # Minimum $1.00
-                    'maximum': 50000,  # Maximum $500.00
-                },
-            },
-            'quantity': 1,
-        },
-    ],
-    mode='payment',
-    success_url=request.base_url + '?result=success&session_id={CHECKOUT_SESSION_ID}',
-    cancel_url=request.base_url + '?result=cancel',
-    metadata={
-        'phone_number': clean_phone,
-        'test': 'true',
-        'user_id': str(user_id),
-    },
-)
+                    payment_method_types=['card'],
+                    line_items=[
+                        {
+                            'price_data': {
+                                'currency': 'usd',
+                                'product_data': {
+                                    'name': 'TreeHouse Delivery Fee',
+                                },
+                                'unit_amount': 300,  # $3.00
+                            },
+                            'quantity': 1,
+                        },
+                        {
+                            'price_data': {
+                                'currency': 'usd',
+                                'product': 'price_1RAFIgAKf1IOilM7UwJ9qO6y',  # Your product ID
+                                'unit_amount': 1000,  # Default $10.00 (1000 cents)
+                                'unit_amount_decimal': "1000",  # Same as unit_amount but as a string
+                            },
+                            'quantity': 1,
+                        },
+                    ],
+                    mode='payment',
+                    success_url=request.base_url + '?result=success&session_id={CHECKOUT_SESSION_ID}',
+                    cancel_url=request.base_url + '?result=cancel',
+                    metadata={
+                        'phone_number': clean_phone,
+                        'test': 'true',
+                        'user_id': str(user_id),
+                    },
+                )
                 
                 payment_session_id = checkout_session.id
                 payment_link = checkout_session.url
