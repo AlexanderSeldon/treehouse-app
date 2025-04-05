@@ -165,6 +165,9 @@ if stripe_secret_key:
 else:
     logger.warning("Stripe credentials not found")
 
+stripe.api_version = "2024-09-30"
+
+
 @app.route('/api/signup', methods=['POST'])
 def signup():
     data = request.json
@@ -865,6 +868,23 @@ def sms_webhook():
         if stripe_secret_key:
             # Use Stripe for payment processing
             try:
+                # Create product for food order
+                food_product = stripe.Product.create(
+                    name="Food Order Amount",
+                    description="Enter the exact price of your food order"
+                )
+                
+                # Create price with custom_unit_amount
+                food_price = stripe.Price.create(
+                    product=food_product.id,
+                    currency="usd",
+                    custom_unit_amount={
+                        "enabled": True,
+                        "minimum": 100,   # $1.00 minimum
+                        "maximum": 50000  # $500.00 maximum
+                    }
+                )
+                
                 # Create a Stripe Checkout Session with automatic $3 delivery fee
                 checkout_session = stripe.checkout.Session.create(
                     payment_method_types=['card'],
@@ -880,12 +900,7 @@ def sms_webhook():
                             'quantity': 1,
                         },
                         {
-                            'price_data': {
-                                'currency': 'usd',
-                                'product': 'prod_S4AmnpLNObMYOs',  # Your product ID
-                                'unit_amount': 1000,  # Set a default amount of $10.00 (1000 cents)
-                                'unit_amount_decimal': "1000",  # Same as unit_amount but as a string
-                            },
+                            'price': food_price.id,
                             'quantity': 1,
                         },
                     ],
@@ -916,7 +931,7 @@ def sms_webhook():
                 
                 # Send payment instructions
                 response = "Here's your payment link:\n" + payment_link + "\n\n"
-                response += "The $3 delivery fee is automatically included. Please enter the exact price of your food order only."
+                response += "The $3 delivery fee is automatically included. Please enter the exact price of your food order."
                 
                 if has_active_order:
                     order_text = active_sessions[clean_phone].get('order_text', '')
@@ -1105,6 +1120,23 @@ def test_sms_simple():
         # If Stripe is configured, create a real checkout session for testing
         if stripe_secret_key:
             try:
+                # Create product for food order
+                food_product = stripe.Product.create(
+                    name="Food Order Amount",
+                    description="Enter the exact price of your food order"
+                )
+                
+                # Create price with custom_unit_amount
+                food_price = stripe.Price.create(
+                    product=food_product.id,
+                    currency="usd",
+                    custom_unit_amount={
+                        "enabled": True,
+                        "minimum": 100,   # $1.00 minimum
+                        "maximum": 50000  # $500.00 maximum
+                    }
+                )
+                
                 # Create an actual Stripe checkout session
                 checkout_session = stripe.checkout.Session.create(
                     payment_method_types=['card'],
@@ -1120,12 +1152,7 @@ def test_sms_simple():
                             'quantity': 1,
                         },
                         {
-                            'price_data': {
-                                'currency': 'usd',
-                                'product': 'price_1RAFIgAKf1IOilM7UwJ9qO6y',  # Your product ID
-                                'unit_amount': 1000,  # Default $10.00 (1000 cents)
-                                'unit_amount_decimal': "1000",  # Same as unit_amount but as a string
-                            },
+                            'price': food_price.id,
                             'quantity': 1,
                         },
                     ],
@@ -1168,7 +1195,7 @@ def test_sms_simple():
                 html_response += f"<p><strong>Your order:</strong> {order_text}</p>"
         
         html_response += f"<p><strong>Payment Link:</strong> <a href='{payment_link}' target='_blank'>{payment_link}</a></p>"
-        html_response += "<p>The $3 delivery fee is automatically included. Please enter the exact price of your food order only.</p>"
+        html_response += "<p>The $3 delivery fee is automatically included. Please enter the exact price of your food order.</p>"
         
         # If Stripe is not configured, show a visual simulation
         if not stripe_secret_key:
