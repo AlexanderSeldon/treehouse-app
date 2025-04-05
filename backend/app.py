@@ -165,7 +165,7 @@ if stripe_secret_key:
 else:
     logger.warning("Stripe credentials not found")
 
-stripe.api_version = "2024-09-30"
+stripe.api_version = "2025-03-31.basil"
 
 
 @app.route('/api/signup', methods=['POST'])
