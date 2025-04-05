@@ -851,6 +851,32 @@ def sms_webhook():
             else:
                 active_sessions[clean_phone]['order_text'] = order_text
             
+            # ADD THIS SECTION: Send notification to admin
+            if client:
+                try:
+                    # Get user details if available
+                    c.execute("SELECT name, dorm_building, room_number FROM users WHERE id = ?", (user_id,))
+                    user_details = c.fetchone()
+                    user_name = user_details[0] if user_details and user_details[0] else "Unknown"
+                    dorm = user_details[1] if user_details and user_details[1] else "Unknown"
+                    room = user_details[2] if user_details and user_details[2] else "Unknown"
+                    
+                    # Build the notification
+                    admin_note = f"NEW TEXT ORDER RECEIVED!\n\n"
+                    admin_note += f"Customer: {user_name} ({from_number})\n"
+                    admin_note += f"Location: {dorm}, Room {room}\n\n"
+                    admin_note += f"Order: {order_text}\n\n"
+                    admin_note += "Customer will need to text 'PAY' to receive payment link."
+                    
+                    client.messages.create(
+                        body=admin_note,
+                        from_=twilio_phone,
+                        to=notification_email
+                    )
+                    logger.info(f"Admin notification sent for new text order from {from_number}")
+                except Exception as e:
+                    logger.error(f"Error sending admin notification: {e}")
+            
             # Acknowledge the order
             response = f"Got it! Your order: {order_text}\n\n"
             response += "Text 'PAY' to receive a payment link. You'll enter the total amount including your food cost plus our $4 delivery fee."
