@@ -853,7 +853,7 @@ def sms_webhook():
             
             # Acknowledge the order
             response = f"Got it! Your order: {order_text}\n\n"
-            response += "Text 'PAY' to receive a payment link. You'll enter the exact amount of your order plus our $2-4 delivery fee."
+            response += "Text 'PAY' to receive a payment link. You'll enter only the cost of your food. Our $4 delivery fee will be automatically added."
         
         resp.message(response)
         logger.info(f"Processed order request from {from_number} using TwiML")
@@ -862,50 +862,62 @@ def sms_webhook():
         # Check if they have an active order
         has_active_order = clean_phone in active_sessions
         
-        # Default delivery fee (always $3)
-        delivery_fee = 3.00
+        # Default delivery fee (now $4)
+        delivery_fee = 4.00
         
         if stripe_secret_key:
-            # Use Stripe for payment processing
+            # Use Stripe for payment processing with Option 2
             try:
-                # Create product for food order
-                food_product = stripe.Product.create(
-                    name="Food Order Amount",
-                    description="Enter the exact price of your food order"
+                # Create a product for the combined amount
+                product = stripe.Product.create(
+                    name="TreeHouse Delivery",
+                    description="Food order + delivery fee"
                 )
                 
-                # Create price with custom_unit_amount
-                food_price = stripe.Price.create(
-                    product=food_product.id,
-                    currency="usd",
-                    custom_unit_amount={
-                        "enabled": True,
-                        "minimum": 100,   # $1.00 minimum
-                        "maximum": 50000  # $500.00 maximum
-                    }
-                )
-                
-                # Create a Stripe Checkout Session with automatic $3 delivery fee
+                # Create a checkout session with automatic fixed amount + custom amount
                 checkout_session = stripe.checkout.Session.create(
                     payment_method_types=['card'],
-                    line_items=[
+                    # No line_items needed with this approach
+                    custom_text={
+                        'submit': {'message': 'Pay for delivery'}
+                    },
+                    # This sets up the custom field for the food amount
+                    custom_fields=[
                         {
-                            'price_data': {
-                                'currency': 'usd',
-                                'product_data': {
-                                    'name': 'TreeHouse Delivery Fee',
-                                },
-                                'unit_amount': int(delivery_fee * 100),  # Convert to cents
+                            'key': 'food_amount',
+                            'label': {
+                                'type': 'custom',
+                                'custom': 'Food order amount ($)'
                             },
-                            'quantity': 1,
-                        },
+                            'type': 'numeric',
+                            'numeric': {
+                                'minimum': 1,
+                                'maximum': 500
+                            }
+                        }
+                    ],
+                    # This adds the automatic $4.00 delivery fee
+                    shipping_options=[
                         {
-                            'price': food_price.id,
-                            'quantity': 1,
-                        },
+                            'shipping_rate_data': {
+                                'display_name': 'TreeHouse Delivery Fee',
+                                'fixed_amount': {
+                                    'amount': int(delivery_fee * 100),  # Convert to cents
+                                    'currency': 'usd'
+                                },
+                                'type': 'fixed_amount'
+                            }
+                        }
                     ],
                     mode='payment',
-                    success_url=f'https://treehouseneighbor.com/payment-success?session_id={{CHECKOUT_SESSION_ID}}',
+                    # Add after_submit to process the custom_fields
+                    after_submit={
+                        # This clientside JavaScript adds the custom amount to the total
+                        'redirect': {
+                            'url': 'https://treehouseneighbor.com/payment-success?session_id={CHECKOUT_SESSION_ID}'
+                        },
+                    },
+                    success_url='https://treehouseneighbor.com/payment-success?session_id={CHECKOUT_SESSION_ID}',
                     cancel_url='https://treehouseneighbor.com/payment-cancel',
                     metadata={
                         'phone_number': clean_phone,
@@ -931,7 +943,7 @@ def sms_webhook():
                 
                 # Send payment instructions
                 response = "Here's your payment link:\n" + payment_link + "\n\n"
-                response += "The $3 delivery fee is automatically included. Please enter the exact price of your food order."
+                response += "The $4 delivery fee is automatically included. Please enter only the cost of your food order."
                 
                 if has_active_order:
                     order_text = active_sessions[clean_phone].get('order_text', '')
@@ -983,7 +995,7 @@ def sms_webhook():
             
             # Send payment instructions
             response = "Here's your payment link:\n" + payment_link + "\n\n"
-            response += "Please enter the exact price of your order from the restaurant menu. The $3 delivery fee is automatically added."
+            response += "Please enter only the price of your food order. The $4 delivery fee is automatically added."
             
             if has_active_order:
                 order_text = active_sessions[clean_phone].get('order_text', '')
@@ -1012,7 +1024,7 @@ def sms_webhook():
     
     elif incoming_message in ['help', 'info']:
         # Provide help information
-        response = "TreeHouse - Restaurant delivery for ONLY $2-4!\n\n"
+        response = "TreeHouse - Restaurant delivery for ONLY $4!\n\n"
         response += "Commands:\n"
         response += "• Text 'MENU' to see available restaurants\n"
         response += "• Text 'ORDER' followed by what you want (e.g., 'ORDER 2 burritos from Chipotle')\n"
@@ -1109,7 +1121,7 @@ def test_sms_simple():
     
     elif test_message.lower() == 'order':
         html_response += "<p>Please tell us what you'd like to order by texting 'ORDER' followed by your items.</p>"
-        html_response += "<p>For example: 'ORDER 2 burritos from Chipotle with guac and chips'</p>"
+        html_response += "<p>For example: 'ORDER 2 burritos from Chipotle with extra guac and chips'</p>"
     
     elif test_message.lower() == 'pay':
         # Generate a payment link - either real Stripe or simulation
@@ -1117,46 +1129,60 @@ def test_sms_simple():
         payment_session_id = f"pay_{clean_phone}_{int(dt.datetime.now().timestamp())}"
         payment_link = ""
         
+        # Default delivery fee (now $4)
+        delivery_fee = 4.00
+        
         # If Stripe is configured, create a real checkout session for testing
         if stripe_secret_key:
             try:
-                # Create product for food order
-                food_product = stripe.Product.create(
-                    name="Food Order Amount",
-                    description="Enter the exact price of your food order"
+                # Create a simple product for the combined amount
+                product = stripe.Product.create(
+                    name="TreeHouse Delivery",
+                    description="Food order + delivery fee"
                 )
                 
-                # Create price with custom_unit_amount
-                food_price = stripe.Price.create(
-                    product=food_product.id,
-                    currency="usd",
-                    custom_unit_amount={
-                        "enabled": True,
-                        "minimum": 100,   # $1.00 minimum
-                        "maximum": 50000  # $500.00 maximum
-                    }
-                )
-                
-                # Create an actual Stripe checkout session
+                # Create a checkout session with automatic $4 fixed amount
                 checkout_session = stripe.checkout.Session.create(
                     payment_method_types=['card'],
-                    line_items=[
+                    custom_text={
+                        'submit': {'message': 'Pay for delivery'}
+                    },
+                    # This sets up a custom field for the food amount
+                    custom_fields=[
                         {
-                            'price_data': {
-                                'currency': 'usd',
-                                'product_data': {
-                                    'name': 'TreeHouse Delivery Fee',
-                                },
-                                'unit_amount': 300,  # $3.00
+                            'key': 'food_amount',
+                            'label': {
+                                'type': 'custom',
+                                'custom': 'Food order amount ($)'
                             },
-                            'quantity': 1,
-                        },
+                            'type': 'numeric',
+                            'numeric': {
+                                'minimum': 1,
+                                'maximum': 500
+                            }
+                        }
+                    ],
+                    # This adds the automatic $4.00 delivery fee
+                    shipping_options=[
                         {
-                            'price': food_price.id,
-                            'quantity': 1,
-                        },
+                            'shipping_rate_data': {
+                                'display_name': 'TreeHouse Delivery Fee',
+                                'fixed_amount': {
+                                    'amount': int(delivery_fee * 100),  # Convert to cents
+                                    'currency': 'usd'
+                                },
+                                'type': 'fixed_amount'
+                            }
+                        }
                     ],
                     mode='payment',
+                    # Add after_submit to process the custom_fields
+                    after_submit={
+                        # This clientside JavaScript adds the custom amount to the total
+                        'redirect': {
+                            'url': request.base_url + '?result=success&session_id={CHECKOUT_SESSION_ID}'
+                        },
+                    },
                     success_url=request.base_url + '?result=success&session_id={CHECKOUT_SESSION_ID}',
                     cancel_url=request.base_url + '?result=cancel',
                     metadata={
@@ -1169,6 +1195,7 @@ def test_sms_simple():
                 payment_session_id = checkout_session.id
                 payment_link = checkout_session.url
                 html_response += "<p><strong>Real Stripe Checkout Created!</strong></p>"
+                html_response += "<p>The $4 delivery fee is automatically included. Just enter your food cost.</p>"
                 
             except Exception as e:
                 logger.error(f"Error creating test Stripe session: {e}")
@@ -1195,7 +1222,7 @@ def test_sms_simple():
                 html_response += f"<p><strong>Your order:</strong> {order_text}</p>"
         
         html_response += f"<p><strong>Payment Link:</strong> <a href='{payment_link}' target='_blank'>{payment_link}</a></p>"
-        html_response += "<p>The $3 delivery fee is automatically included. Please enter the exact price of your food order.</p>"
+        html_response += "<p>The $4 delivery fee is automatically included. Please enter only the price of your food order.</p>"
         
         # If Stripe is not configured, show a visual simulation
         if not stripe_secret_key:
@@ -1206,7 +1233,7 @@ def test_sms_simple():
                     <div style="margin-bottom:10px; font-weight:bold;">TreeHouse Food Delivery</div>
                     <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
                         <div>Delivery Fee</div>
-                        <div>$3.00</div>
+                        <div>$4.00</div>
                     </div>
                     <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
                         <div>Food Order</div>
@@ -1214,7 +1241,7 @@ def test_sms_simple():
                     </div>
                     <div style="display:flex; justify-content:space-between; padding-top:10px; border-top:1px solid #eee; font-weight:bold;">
                         <div>Total</div>
-                        <div id="totalAmount">$18.00</div>
+                        <div id="totalAmount">$19.00</div>
                     </div>
                 </div>
                 <button onclick="simulatePayment()" style="background-color:#5469d4; color:white; border:none; padding:10px 15px; border-radius:4px; cursor:pointer;">Pay</button>
@@ -1223,14 +1250,14 @@ def test_sms_simple():
             <script>
             function updateTotal() {
                 const orderAmount = parseFloat(document.getElementById('orderAmount').value) || 0;
-                const total = (orderAmount + 3).toFixed(2);
+                const total = (orderAmount + 4).toFixed(2);
                 document.getElementById('totalAmount').innerText = '$' + total;
             }
             
             document.getElementById('orderAmount').addEventListener('input', updateTotal);
             
             function simulatePayment() {
-                const total = parseFloat(document.getElementById('orderAmount').value) + 3;
+                const total = parseFloat(document.getElementById('orderAmount').value) + 4;
                 alert('Payment simulation: $' + total.toFixed(2) + ' would be charged to your card.\\n\\nIn the real system, this would trigger a webhook that notifies both you and the TreeHouse team about your successful payment.');
                 window.location.href = window.location.href + '?result=success&simulation=true';
             }
