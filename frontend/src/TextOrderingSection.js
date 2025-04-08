@@ -147,7 +147,7 @@ function TextOrderingSection() {
        textAlign: 'center'
      }}>
        <h3 style={{margin: '0 0 10px 0'}}>Don't see a restaurant you want?</h3>
-       <p style={{margin: '0 0 15px 0'}}>Call or text (708) 901-1754 to place a special order</p>
+       <p style={{margin: '0 0 15px 0'}}>If the restauraunt is near campus just place the order anyways. Call 7089011754 for questions</p>
        <p style={{margin: '0', fontWeight: 'bold'}}>First-time orders: Pay after you get your food!</p>
      </div>
      
