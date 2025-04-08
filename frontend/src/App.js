@@ -186,7 +186,7 @@ function App() {
                 <ol style={{textAlign: 'left', maxWidth: '400px', margin: '0 auto', lineHeight: '1.6'}}>
                   <li>We text you the list of restaurants and their menus</li>
                   <li>Yout text us your order details</li>
-                  <li>We send a payment link (you enter menu price, we add delivery fee)</li>
+                  <li>We send a payment link (you enter menu price, plus our delivery fee thats listed)</li>
                 </ol>
               </div>
               
