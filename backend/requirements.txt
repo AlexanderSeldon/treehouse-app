@@ -3,3 +3,4 @@ twilio
 python-dotenv
 gunicorn
 flask-cors
+stripe
