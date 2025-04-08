@@ -130,10 +130,10 @@ function TextOrderingSection() {
            }}>
              <p style={{margin: '0', fontSize: '15px'}}>Here's your payment link:</p>
              <p style={{margin: '5px 0 0 0', fontSize: '14px'}}>[Payment Link]</p>
-             <p style={{margin: '5px 0 0 0', fontSize: '14px'}}>Please enter the exact price from the menu & our delivery fee will automatically be added .</p>
+             <p style={{margin: '5px 0 0 0', fontSize: '14px'}}>Please enter the exact price from the menu plus our delivery fee that will be listed.</p>
            </div>
          </div>
-         <p style={{fontSize: '14px'}}>Text "PAY" to get a secure payment link. Enter the exact menu price & our delivery fee will automatically be added.</p>
+         <p style={{fontSize: '14px'}}>Text "PAY" to get a secure payment link. Enter the exact menu price plus our delivery fee that will be listed.</p>
        </div>
      </div>
      
