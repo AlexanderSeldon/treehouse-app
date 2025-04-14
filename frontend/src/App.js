@@ -104,7 +104,7 @@ function App() {
            <h3 style={{fontSize: '24px', marginBottom: '20px', fontWeight: 'normal'}}>No hidden fees, ever.</h3>
            
            <p style={{marginBottom: '15px'}}>Enter your phone number once to sign up AND order - everything happens by text!</p>
-           <p style={{marginBottom: '15px', fontWeight: 'bold'}}>Pickup from a dorm host on your floor or a neighboring floor.</p>
+           <p style={{marginBottom: '15px', fontWeight: 'bold'}}>Pickup from an RA dorm host on your floor or a neighboring floor.</p>
            <p style={{marginBottom: '15px'}}>You <span style={{fontWeight: 'bold'}}>have to order exactly at the 25-30 minute mark</span> of each hour to get your food at the top of the next hour. We deliver daily from 11am to 10pm.</p>
            <p style={{marginBottom: '25px'}}><span style={{fontWeight: 'bold'}}>Example:</span> Order at 5:25pm, pickup your food from your dorm host at 6:00pm.</p>
            
