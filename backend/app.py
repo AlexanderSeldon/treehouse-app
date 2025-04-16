@@ -8,6 +8,8 @@ from flask_cors import CORS
 import sqlite3
 from twilio.twiml.messaging_response import MessagingResponse
 import stripe
+import openai
+import random
 
 
 # Load environment variables
@@ -135,6 +137,20 @@ def init_db():
         )
     ''')
     
+    # Batch tracking table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS batch_tracking (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_name TEXT NOT NULL,
+            batch_time TIMESTAMP NOT NULL,
+            current_orders INTEGER DEFAULT 0,
+            max_orders INTEGER DEFAULT 10,
+            location TEXT,
+            delivery_fee DECIMAL(5,2) DEFAULT 4.00,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -167,6 +183,90 @@ else:
 
 stripe.api_version = "2025-03-31.basil"
 
+# OpenAI setup
+openai_api_key = os.getenv('OPENAI_API_KEY')
+if openai_api_key:
+    client = openai.OpenAI(api_key=openai_api_key)
+    logger.info("OpenAI client initialized successfully")
+else:
+    logger.warning("OpenAI API key not found")
+
+
+# Hot restaurants rotator - from HotSpotSection.js
+# This will rotate through popular restaurants for each batch
+hot_restaurants = [
+    {"name": "Chipotle", "fee": 4.00, "orders": 5, "freeItem": "Free chips & guac"},
+    {"name": "McDonald's", "fee": 4.00, "orders": 6, "freeItem": "Free medium fries"},
+    {"name": "Chick-fil-A", "fee": 4.00, "orders": 5, "freeItem": "Free cookie"},
+    {"name": "Portillo's", "fee": 4.00, "orders": 5, "freeItem": "Free cheese fries"},
+    {"name": "Starbucks", "fee": 4.00, "orders": 6, "freeItem": "Free cookie"}
+]
+
+other_restaurants = [
+    {"name": "Raising Cane's", "fee": 7.99, "freeItem": "Free Texas toast"},
+    {"name": "Subway", "fee": 8.99, "freeItem": "Free cookie"},
+    {"name": "Panda Express", "fee": 7.49, "freeItem": "Free eggroll"},
+    {"name": "Five Guys", "fee": 9.99, "freeItem": "Free small fries"}
+]
+
+# Initialize batches for restaurants
+def init_restaurant_batches():
+    now = datetime.now()
+    current_hour = now.hour
+    current_minute = now.minute
+    
+    # Find next batch time
+    next_batch_hour = current_hour
+    next_batch_minute = 30 if current_minute < 25 else 0
+    
+    if next_batch_minute == 0:
+        next_batch_hour += 1
+        if next_batch_hour >= 24:
+            next_batch_hour = 0
+    
+    next_batch_time = datetime(now.year, now.month, now.day, next_batch_hour, next_batch_minute)
+    
+    # Check if we're outside operating hours (11am-10pm)
+    if next_batch_hour < 11 or next_batch_hour >= 22:
+        # Adjust to next opening at 11:00
+        if next_batch_hour < 11:
+            next_batch_time = datetime(now.year, now.month, now.day, 11, 0)
+        else:  # after 22:00
+            next_day = now + timedelta(days=1)
+            next_batch_time = datetime(next_day.year, next_day.month, next_day.day, 11, 0)
+    
+    conn = sqlite3.connect('treehouse.db')
+    c = conn.cursor()
+    
+    # Clear previous batches that haven't happened yet
+    c.execute("DELETE FROM batch_tracking WHERE batch_time > ?", (now,))
+    
+    # Create batches for the next few hours
+    locations = ["Student Center", "James Stukel Tower", "University Hall", "Library"]
+    
+    for i in range(3):  # Create 3 upcoming batches
+        batch_time = next_batch_time + timedelta(minutes=30*i)
+        
+        # Only create batches during operating hours
+        batch_hour = batch_time.hour
+        if batch_hour < 11 or batch_hour >= 22:
+            continue
+        
+        # For each restaurant, create a batch
+        for restaurant in hot_restaurants:
+            location = random.choice(locations)
+            c.execute(
+                """INSERT INTO batch_tracking 
+                   (restaurant_name, batch_time, current_orders, max_orders, location, delivery_fee)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (restaurant["name"], batch_time, restaurant["orders"], 10, location, restaurant["fee"])
+            )
+    
+    conn.commit()
+    conn.close()
+
+# Initialize batches at startup
+init_restaurant_batches()
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
@@ -768,13 +868,445 @@ def init_sample_data():
         logger.error(f"Database error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# At the top of your file, add this to store active ordering sessions
+# Functions for AI-powered SMS conversations
+def get_current_batches():
+    """Get current restaurant batches for the next delivery window"""
+    try:
+        now = datetime.now()
+        conn = sqlite3.connect('treehouse.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        
+        # Get the next batch time
+        c.execute("""
+            SELECT * FROM batch_tracking 
+            WHERE batch_time > ? 
+            ORDER BY batch_time ASC 
+            LIMIT 1
+        """, (now,))
+        next_batch = c.fetchone()
+        
+        if not next_batch:
+            # No scheduled batches, initialize new ones
+            init_restaurant_batches()
+            
+            # Try again
+            c.execute("""
+                SELECT * FROM batch_tracking 
+                WHERE batch_time > ? 
+                ORDER BY batch_time ASC 
+                LIMIT 1
+            """, (now,))
+            next_batch = c.fetchone()
+            
+            if not next_batch:
+                # Still no batches, use dynamic data
+                next_batch_time = now + timedelta(minutes=30)
+                if next_batch_time.minute < 30:
+                    next_batch_time = next_batch_time.replace(minute=30, second=0, microsecond=0)
+                else:
+                    next_batch_time = next_batch_time.replace(hour=next_batch_time.hour+1, minute=0, second=0, microsecond=0)
+                
+                batch_data = []
+                for restaurant in hot_restaurants:
+                    batch_data.append({
+                        'restaurant_name': restaurant['name'],
+                        'batch_time': next_batch_time,
+                        'current_orders': restaurant['orders'],
+                        'max_orders': 10,
+                        'location': random.choice(["Student Center", "James Stukel Tower", "University Hall", "Library"]),
+                        'delivery_fee': restaurant['fee'],
+                        'free_item': restaurant['freeItem']
+                    })
+                conn.close()
+                return batch_data
+        
+        batch_time = next_batch['batch_time']
+        
+        # Get all restaurants for this batch time
+        c.execute("""
+            SELECT * FROM batch_tracking 
+            WHERE batch_time = ?
+            ORDER BY restaurant_name
+        """, (batch_time,))
+        restaurant_batches = [dict(row) for row in c.fetchall()]
+        
+        # Add free item information from hot_restaurants
+        for batch in restaurant_batches:
+            for restaurant in hot_restaurants:
+                if restaurant['name'] == batch['restaurant_name']:
+                    batch['free_item'] = restaurant['freeItem']
+                    break
+            else:
+                batch['free_item'] = "Free item"  # Default if not found
+        
+        conn.close()
+        return restaurant_batches
+    
+    except Exception as e:
+        logger.error(f"Error getting current batches: {e}")
+        return []
 
+def update_batch_count(restaurant_name, batch_time=None):
+    """Update the order count for a specific restaurant batch"""
+    try:
+        conn = sqlite3.connect('treehouse.db')
+        conn.row_factory = sqlite3.Row  # Add this to get row objects that can be converted to dict
+        c = conn.cursor()
+        
+        if batch_time:
+            c.execute("""
+                UPDATE batch_tracking 
+                SET current_orders = current_orders + 1 
+                WHERE restaurant_name = ? AND batch_time = ?
+            """, (restaurant_name, batch_time))
+        else:
+            # Get the next batch for this restaurant
+            now = datetime.now()
+            c.execute("""
+                UPDATE batch_tracking 
+                SET current_orders = current_orders + 1 
+                WHERE restaurant_name = ? AND batch_time > ? 
+                ORDER BY batch_time ASC 
+                LIMIT 1
+            """, (restaurant_name, now))
+        
+        conn.commit()
+        
+        # Get the updated batch info
+        if batch_time:
+            c.execute("""
+                SELECT * FROM batch_tracking 
+                WHERE restaurant_name = ? AND batch_time = ?
+            """, (restaurant_name, batch_time))
+        else:
+            now = datetime.now()
+            c.execute("""
+                SELECT * FROM batch_tracking 
+                WHERE restaurant_name = ? AND batch_time > ? 
+                ORDER BY batch_time ASC 
+                LIMIT 1
+            """, (restaurant_name, now))
+            
+        batch = c.fetchone()
+        conn.close()
+        
+        if batch:
+            return dict(batch)  # Convert to a dictionary before returning
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"Error updating batch count: {e}")
+        return None
+
+def extract_restaurant_from_order(order_text):
+    """
+    Use OpenAI to extract the restaurant from the order text
+    Returns tuple of (restaurant_name, processed_order_text)
+    """
+    if not openai_api_key:
+        # If OpenAI is not configured, use a simple keyword search
+        restaurant_keywords = {
+            "Chipotle": ["chipotle", "burrito", "bowl", "guac"],
+            "McDonald's": ["mcdonald", "big mac", "mcnugget", "happy meal"],
+            "Chick-fil-A": ["chick-fil-a", "chicken sandwich", "nuggets"],
+            "Portillo's": ["portillo", "hot dog", "beef sandwich"],
+            "Starbucks": ["starbuck", "coffee", "frappuccino", "latte"]
+        }
+        
+        order_lower = order_text.lower()
+        for restaurant, keywords in restaurant_keywords.items():
+            if any(keyword in order_lower for keyword in keywords):
+                return restaurant, order_text
+        
+        # If no keywords found, return None
+        return None, order_text
+    
+    try:
+        # Use OpenAI to extract restaurant and process order
+        client = openai.OpenAI(api_key=openai_api_key)
+        
+        prompt = f"""
+        Extract the restaurant name from this food order. If no specific restaurant is mentioned, 
+        suggest the most likely restaurant based on the food items ordered.
+        
+        Only return the restaurant name, nothing else.
+        
+        Order text: {order_text}
+        
+        Available restaurants:
+        - Chipotle
+        - McDonald's
+        - Chick-fil-A
+        - Portillo's
+        - Starbucks
+        - Raising Cane's
+        - Subway
+        - Panda Express
+        - Five Guys
+        """
+        
+        response = client.completions.create(
+            model="gpt-3.5-turbo-instruct",
+            prompt=prompt,
+            max_tokens=20,
+            temperature=0.3
+        )
+        
+        restaurant = response.choices[0].text.strip()
+        
+        # Handle responses that might include extra text
+        for name in ["Chipotle", "McDonald's", "Chick-fil-A", "Portillo's", "Starbucks", 
+                    "Raising Cane's", "Subway", "Panda Express", "Five Guys"]:
+            if name in restaurant:
+                return name, order_text
+        
+        # If no matching restaurant found, return the first available
+        return "Chipotle", order_text
+    
+    except Exception as e:
+        logger.error(f"Error using OpenAI for restaurant extraction: {e}")
+        return None, order_text
+
+def ai_generate_response(prompt, user_history=None):
+    """Generate AI response using OpenAI"""
+    if not openai_api_key:
+        # Fallback without AI
+        return "I'm sorry, I couldn't process that with AI. Please try again or text ORDER followed by what you want."
+    
+    try:
+        client = openai.OpenAI(api_key=openai_api_key)
+        
+        # Prepare conversation history if provided
+        messages = []
+        if user_history:
+            for entry in user_history:
+                if entry['role'] == 'user':
+                    messages.append({"role": "user", "content": entry['content']})
+                else:
+                    messages.append({"role": "assistant", "content": entry['content']})
+        
+        # Add the current prompt
+        messages.append({"role": "user", "content": prompt})
+        
+        # Call OpenAI API
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.7
+        )
+        
+        return response.choices[0].message.content
+    
+    except Exception as e:
+        logger.error(f"Error using OpenAI for response generation: {e}")
+        return "I'm having trouble processing that right now. Please try texting ORDER followed by what you want, or text MENU to see options."
+
+def format_batch_info(batches):
+    """Format the batch information for text message display"""
+    if not batches:
+        return "No current batches available. Please try again later."
+    
+    # Get the batch time from the first batch
+    batch_time = datetime.fromisoformat(str(batches[0]['batch_time'])) if isinstance(batches[0]['batch_time'], str) else batches[0]['batch_time']
+    batch_time_str = batch_time.strftime("%I:%M %p")
+    
+    # Calculate when to order by (X:25)
+    order_by_time = batch_time - timedelta(minutes=5)
+    order_by_str = order_by_time.strftime("%I:%M %p")
+    
+    # Format the response
+    response = f"TreeHouse Options (Order by {order_by_str}):\n\n"
+    
+    for batch in batches:
+        restaurant = batch['restaurant_name']
+        location = batch['location']
+        current_orders = batch['current_orders']
+        max_orders = batch['max_orders']
+        fee = batch['delivery_fee']
+        free_item = batch.get('free_item', 'Free item')
+        
+        response += f"- {restaurant} ({location}, {batch_time_str}) [${fee:.2f} fee, {current_orders}/{max_orders} spots] - Share & get {free_item}\n"
+    
+    response += "\nText \"ORDER\" followed by what you want.\n"
+    response += "Check restaurant websites for prices - not included in our system.\n"
+    response += "Share with a friend for you both to get free items when you order!"
+    
+    return response
+
+def ai_process_order(order_text, phone_number):
+    """
+    Process an order request using AI
+    Returns a tuple of (processed_text, restaurant_name, batch_info)
+    """
+    # Extract restaurant from order text
+    restaurant_name, processed_order = extract_restaurant_from_order(order_text)
+    
+    if not restaurant_name:
+        return (
+            "I couldn't determine which restaurant you want to order from. "
+            "Please specify a restaurant in your order, like 'ORDER a burrito from Chipotle'.",
+            None,
+            None
+        )
+    
+    # Get active batch for this restaurant
+    now = datetime.now()
+    conn = sqlite3.connect('treehouse.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT * FROM batch_tracking 
+        WHERE restaurant_name = ? AND batch_time > ? 
+        ORDER BY batch_time ASC 
+        LIMIT 1
+    """, (restaurant_name, now))
+    
+    batch_row = c.fetchone()
+    
+    if not batch_row:
+        # No batch found, create one
+        init_restaurant_batches()
+        
+        # Try again
+        c.execute("""
+            SELECT * FROM batch_tracking 
+            WHERE restaurant_name = ? AND batch_time > ? 
+            ORDER BY batch_time ASC 
+            LIMIT 1
+        """, (restaurant_name, now))
+        
+        batch_row = c.fetchone()
+        
+        if not batch_row:
+            conn.close()
+            return (
+                f"I couldn't find an active batch for {restaurant_name}. "
+                "Please try ordering from another restaurant or text MENU to see available options.",
+                None,
+                None
+            )
+    
+    # Convert to dictionary for easier handling
+    batch = dict(batch_row)
+    
+    # Check if the batch is full
+    if batch['current_orders'] >= batch['max_orders']:
+        conn.close()
+        return (
+            f"The current batch for {restaurant_name} is full. "
+            "Please try ordering from another restaurant or wait for the next batch.",
+            None,
+            None
+        )
+    
+    # Update batch count
+    c.execute("""
+        UPDATE batch_tracking 
+        SET current_orders = current_orders + 1 
+        WHERE restaurant_name = ? AND batch_time = ?
+    """, (restaurant_name, batch['batch_time']))
+    
+    conn.commit()
+    
+    # Get the updated batch info
+    c.execute("""
+        SELECT * FROM batch_tracking 
+        WHERE restaurant_name = ? AND batch_time = ?
+    """, (restaurant_name, batch['batch_time']))
+    
+    updated_row = c.fetchone()
+    if not updated_row:
+        conn.close()
+        return (
+            f"There was an error updating the batch for {restaurant_name}. Please try again.",
+            None,
+            None
+        )
+    
+    batch = dict(updated_row)
+    
+    # Get free item info
+    free_item = None
+    for restaurant in hot_restaurants:
+        if restaurant['name'] == restaurant_name:
+            free_item = restaurant['freeItem']
+            break
+    
+    if not free_item:
+        for restaurant in other_restaurants:
+            if restaurant['name'] == restaurant_name:
+                free_item = restaurant['freeItem']
+                break
+    
+    # Format batch info
+    batch_time = datetime.fromisoformat(str(batch['batch_time'])) if isinstance(batch['batch_time'], str) else batch['batch_time']
+    batch_time_str = batch_time.strftime("%I:%M %p")
+    
+    # Add user to active_sessions if not already there
+    if phone_number not in active_sessions:
+        active_sessions[phone_number] = {
+            'restaurant': restaurant_name,
+            'order_text': processed_order,
+            'batch_time': batch_time,
+            'started_at': now
+        }
+    else:
+        active_sessions[phone_number]['restaurant'] = restaurant_name
+        active_sessions[phone_number]['order_text'] = processed_order
+        active_sessions[phone_number]['batch_time'] = batch_time
+    
+    # Check if user is in the database
+    c.execute("SELECT id FROM users WHERE phone_number = ?", (phone_number,))
+    user = c.fetchone()
+    
+    if user:
+        user_id = user['id']
+    else:
+        # Auto-register the user
+        c.execute("INSERT INTO users (phone_number) VALUES (?)", (phone_number,))
+        conn.commit()
+        user_id = c.lastrowid
+        
+    # Store user_id in session
+    active_sessions[phone_number]['user_id'] = user_id
+    
+    conn.close()
+    
+    # Get restaurant website (you might need to add real websites to your restaurant list)
+    restaurant_websites = {
+        "Chipotle": "https://www.chipotle.com/menu",
+        "McDonald's": "https://www.mcdonalds.com/menu",
+        "Chick-fil-A": "https://www.chick-fil-a.com/menu",
+        "Portillo's": "https://www.portillos.com/menu",
+        "Starbucks": "https://www.starbucks.com/menu",
+        "Raising Cane's": "https://www.raisingcanes.com/menu",
+        "Subway": "https://www.subway.com/menu",
+        "Panda Express": "https://www.pandaexpress.com/menu",
+        "Five Guys": "https://www.fiveguys.com/menu"
+    }
+    
+    website = restaurant_websites.get(restaurant_name, "the restaurant's website")
+    
+    # Prepare response
+    response = (
+        f"Got your {restaurant_name} order! You've joined the {batch['location']} batch "
+        f"({batch['current_orders']}/{batch['max_orders']} orders).\n\n"
+        f"Pickup at {batch_time_str}.\n"
+        f"Check {website} for your meal price.\n\n"
+        f"Text 'PAY' to get your payment link (enter food cost + ${batch['delivery_fee']:.2f} delivery fee).\n\n"
+        f"Share this text and you both get {free_item}: \"Join me for {restaurant_name}! "
+        f"Text (708) 901-1754 to order with TreeHouse and save 90% on delivery!\""
+    )
+    
+    return response, restaurant_name, batch
 
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
     # Get the incoming message details
-    incoming_message = request.values.get('Body', '').strip().lower()
+    incoming_message = request.values.get('Body', '').strip()
     from_number = request.values.get('From', '')
     
     # Clean the phone number
@@ -801,44 +1333,46 @@ def sms_webhook():
     # Create a TwiML response
     resp = MessagingResponse()
     
-    # Process command
-    if incoming_message == 'menu' or incoming_message == 'restaurants':
-        # Get restaurant data from the frontend links
-        restaurants = [
-            {"name": "Chick-fil-A", "link": "https://order.chick-fil-a.com/menu"},
-            {"name": "Panda Express", "link": "https://www.pandaexpress.com/location/roosevelt-canal-px/menu"},
-            {"name": "Subway", "link": "https://restaurants.subway.com/united-states/il/chicago/750-s-halsted-st"},
-            {"name": "Jim's Original", "link": "http://www.jimsoriginal.com/"},
-            {"name": "Al's Beef", "link": "https://www.alsbeef.com/chicago-little-italy-taylor-street"},
-            {"name": "Busy Burger", "link": "https://www.busyburger.com/menus"},
-            {"name": "Portillo's", "link": "https://order.portillos.com/menu/portillos-hot-dogs-chicago/"},
-            {"name": "Chipotle", "link": "https://locations.chipotle.com/il/chicago/1132-s-clinton-st"},
-            {"name": "Dunkin", "link": "https://locations.dunkindonuts.com/en/il/chicago/750-s-halsted-st-university/349361"},
-            {"name": "Au Bon Pain", "link": "https://www.aubonpain.com/menu"},
-            {"name": "Thai Bowl", "link": "http://places.singleplatform.com/thai-bowl-2/menu"},
-            {"name": "Mario's Italian Ice", "link": "http://www.marioslemonade.com/menu"},
-            {"name": "Gather Tea Bar", "link": "http://www.gathersteabar.com/"},
-            {"name": "Lulu's Hot Dogs", "link": "http://lulushotdogs.com/"}
-        ]
+    # Get user history for AI context
+    user_history = []
+    if clean_phone in active_sessions and 'conversation_history' in active_sessions[clean_phone]:
+        user_history = active_sessions[clean_phone]['conversation_history']
+    else:
+        # Initialize conversation history
+        active_sessions[clean_phone] = active_sessions.get(clean_phone, {})
+        active_sessions[clean_phone]['conversation_history'] = []
+        active_sessions[clean_phone]['user_id'] = user_id
+    
+    # Process command based on the first word (lowercase for case insensitivity)
+    first_word = incoming_message.split(' ')[0].lower()
+    
+    if first_word == 'menu' or first_word == 'restaurants':
+        # Get current batches
+        batches = get_current_batches()
+        response = format_batch_info(batches)
         
-        response = welcome_msg + "TreeHouse Restaurant Options:\n\n"
-        for idx, restaurant in enumerate(restaurants, 1):
-            response += f"{idx}. {restaurant['name']} - {restaurant['link']}\n"
+        # Add welcome message if needed
+        if welcome_msg:
+            response = welcome_msg + response
         
-        response += "\nTo order, text 'ORDER' followed by what you want from any restaurant. "
-        response += "Don't see a restaurant you want? Call (708) 901-1754 to order.\n\n"
-        response += "When you're ready to pay, text 'PAY' to get a payment link."
+        # Update conversation history
+        user_history.append({'role': 'user', 'content': incoming_message})
+        user_history.append({'role': 'assistant', 'content': response})
+        active_sessions[clean_phone]['conversation_history'] = user_history
         
         resp.message(response)
         logger.info(f"Sent restaurant list to {from_number} using TwiML")
-    
-    elif incoming_message.startswith('order ') or incoming_message == 'order':
+        
+    elif first_word == 'order':
         # Process order with free-form text
-        if incoming_message == 'order':
+        if len(incoming_message) <= 6:  # Just "order" with no details
             response = "Please tell us what you'd like to order by texting 'ORDER' followed by your items. For example: 'ORDER 2 burritos from Chipotle with guac and chips'"
         else:
             # Extract order text (everything after "order ")
             order_text = incoming_message[6:].strip()
+            
+            # Process the order with AI
+            ai_response, restaurant_name, batch_info = ai_process_order(order_text, clean_phone)
             
             # Save the order in the session
             if clean_phone not in active_sessions:
@@ -848,11 +1382,19 @@ def sms_webhook():
                     'order_text': order_text,
                     'started_at': dt.datetime.now()
                 }
+                if restaurant_name:
+                    active_sessions[clean_phone]['restaurant'] = restaurant_name
+                if batch_info:
+                    active_sessions[clean_phone]['batch_info'] = batch_info
             else:
                 active_sessions[clean_phone]['order_text'] = order_text
+                if restaurant_name:
+                    active_sessions[clean_phone]['restaurant'] = restaurant_name
+                if batch_info:
+                    active_sessions[clean_phone]['batch_info'] = batch_info
             
-            # ADD THIS SECTION: Send notification to admin
-            if client:
+            # Send notification to admin
+            if client and restaurant_name:
                 try:
                     # Get user details if available
                     c.execute("SELECT name, dorm_building, room_number FROM users WHERE id = ?", (user_id,))
@@ -865,6 +1407,7 @@ def sms_webhook():
                     admin_note = f"NEW TEXT ORDER RECEIVED!\n\n"
                     admin_note += f"Customer: {user_name} ({from_number})\n"
                     admin_note += f"Location: {dorm}, Room {room}\n\n"
+                    admin_note += f"Restaurant: {restaurant_name}\n"
                     admin_note += f"Order: {order_text}\n\n"
                     admin_note += "Customer will need to text 'PAY' to receive payment link."
                     
@@ -877,19 +1420,27 @@ def sms_webhook():
                 except Exception as e:
                     logger.error(f"Error sending admin notification: {e}")
             
-            # Acknowledge the order
-            response = f"Got it! Your order: {order_text}\n\n"
-            response += "Text 'PAY' to receive a payment link. You'll enter the total amount including your food cost plus our $4 delivery fee."
+            # Set the response
+            response = ai_response
+        
+        # Update conversation history
+        user_history.append({'role': 'user', 'content': incoming_message})
+        user_history.append({'role': 'assistant', 'content': response})
+        active_sessions[clean_phone]['conversation_history'] = user_history
         
         resp.message(response)
         logger.info(f"Processed order request from {from_number} using TwiML")
-    
-    elif incoming_message == 'pay':
+        
+    elif first_word == 'pay':
         # Check if they have an active order
         has_active_order = clean_phone in active_sessions
         
-        # Default delivery fee (now $4)
-        delivery_fee = 4.00
+        # Get delivery fee from batch info if available
+        delivery_fee = 4.00  # Default
+        if has_active_order and 'batch_info' in active_sessions[clean_phone]:
+            batch_info = active_sessions[clean_phone]['batch_info']
+            if batch_info and 'delivery_fee' in batch_info:
+                delivery_fee = float(batch_info['delivery_fee'])
         
         if stripe_secret_key:
             # Use Stripe for payment processing with customer-chosen amount
@@ -897,7 +1448,7 @@ def sms_webhook():
                 # Create a product for the food order
                 food_product = stripe.Product.create(
                     name="TreeHouse Food Order",
-                    description="Your food order + $4 delivery fee"
+                    description=f"Your food order + ${delivery_fee:.2f} delivery fee"
                 )
                 
                 # Create a price with custom_unit_amount enabled
@@ -947,12 +1498,29 @@ def sms_webhook():
                 
                 # Send payment instructions
                 response = "Here's your payment link:\n" + payment_link + "\n\n"
-                response += "Please enter the TOTAL amount including BOTH your food cost AND the $4 delivery fee.\n"
-                response += "For example, if your food costs $15, enter $19 total."
+                response += f"Please enter the TOTAL amount including BOTH your food cost AND the ${delivery_fee:.2f} delivery fee.\n"
+                response += f"For example, if your food costs $15, enter ${15 + delivery_fee:.2f} total."
                 
                 if has_active_order:
                     order_text = active_sessions[clean_phone].get('order_text', '')
+                    restaurant = active_sessions[clean_phone].get('restaurant', '')
+                    batch_time = None
+                    
+                    if 'batch_info' in active_sessions[clean_phone]:
+                        batch_info = active_sessions[clean_phone]['batch_info']
+                        if batch_info and 'batch_time' in batch_info:
+                            batch_time = batch_info['batch_time']
+                    
                     response += f"\n\nFor reference, your order was: {order_text}"
+                    
+                    if restaurant and batch_time:
+                        batch_time_str = batch_time.strftime("%I:%M %p")
+                        response += f"\nRestaurant: {restaurant}, Pickup at {batch_time_str}"
+                
+                # Update conversation history
+                user_history.append({'role': 'user', 'content': incoming_message})
+                user_history.append({'role': 'assistant', 'content': response})
+                active_sessions[clean_phone]['conversation_history'] = user_history
                 
                 resp.message(response)
                 logger.info(f"Sent Stripe payment link to {from_number} using TwiML")
@@ -963,6 +1531,8 @@ def sms_webhook():
                         admin_note = f"PAYMENT REQUESTED!\n\n"
                         admin_note += f"Customer: {from_number}\n"
                         if has_active_order:
+                            restaurant = active_sessions[clean_phone].get('restaurant', 'Unknown')
+                            admin_note += f"Restaurant: {restaurant}\n"
                             admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
                         else:
                             admin_note += "Note: Customer likely called in their order\n"
@@ -979,6 +1549,12 @@ def sms_webhook():
             except Exception as e:
                 logger.error(f"Error creating Stripe session: {e}")
                 response = "Sorry, there was an error generating your payment link. Please try again or call (708) 901-1754 for assistance."
+                
+                # Update conversation history
+                user_history.append({'role': 'user', 'content': incoming_message})
+                user_history.append({'role': 'assistant', 'content': response})
+                active_sessions[clean_phone]['conversation_history'] = user_history
+                
                 resp.message(response)
         else:
             # Fallback to the placeholder payment link if Stripe is not configured
@@ -1000,11 +1576,16 @@ def sms_webhook():
             
             # Send payment instructions
             response = "Here's your payment link:\n" + payment_link + "\n\n"
-            response += "Please enter the total amount including both your food cost AND the $4 delivery fee."
+            response += f"Please enter the total amount including both your food cost AND the ${delivery_fee:.2f} delivery fee."
             
             if has_active_order:
                 order_text = active_sessions[clean_phone].get('order_text', '')
                 response += f"\n\nFor reference, your order was: {order_text}"
+            
+            # Update conversation history
+            user_history.append({'role': 'user', 'content': incoming_message})
+            user_history.append({'role': 'assistant', 'content': response})
+            active_sessions[clean_phone]['conversation_history'] = user_history
             
             resp.message(response)
             logger.info(f"Sent placeholder payment link to {from_number} using TwiML (Stripe not configured)")
@@ -1015,6 +1596,8 @@ def sms_webhook():
                     admin_note = f"PAYMENT REQUESTED!\n\n"
                     admin_note += f"Customer: {from_number}\n"
                     if has_active_order:
+                        restaurant = active_sessions[clean_phone].get('restaurant', 'Unknown')
+                        admin_note += f"Restaurant: {restaurant}\n"
                         admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
                     else:
                         admin_note += "Note: Customer likely called in their order\n"
@@ -1027,7 +1610,7 @@ def sms_webhook():
                 except Exception as e:
                     logger.error(f"Error sending admin notification: {e}")
     
-    elif incoming_message in ['help', 'info']:
+    elif first_word in ['help', 'info']:
         # Provide help information
         response = "TreeHouse - Restaurant delivery for ONLY $4!\n\n"
         response += "Commands:\n"
@@ -1037,15 +1620,146 @@ def sms_webhook():
         response += "• Call (708) 901-1754 for special orders or questions\n\n"
         response += "Food is delivered hourly. Order by :25-:30 of each hour to get your food at the top of the next hour."
         
+        # Update conversation history
+        user_history.append({'role': 'user', 'content': incoming_message})
+        user_history.append({'role': 'assistant', 'content': response})
+        active_sessions[clean_phone]['conversation_history'] = user_history
+        
         resp.message(response)
         logger.info(f"Sent help info to {from_number} using TwiML")
     
-    else:
-        # Handle unknown commands
-        response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
+    elif first_word == 'cancel':
+        # Handle order cancellation
+        if clean_phone in active_sessions and 'order_text' in active_sessions[clean_phone]:
+            # Check if there's a time limit on cancellation (e.g., 10 minutes after ordering)
+            now = datetime.now()
+            started_at = active_sessions[clean_phone].get('started_at')
+            
+            if started_at and (now - started_at).total_seconds() <= 600:  # 10 minutes
+                # Cancel the order
+                restaurant = active_sessions[clean_phone].get('restaurant', 'Unknown')
+                
+                # Remove the order from the batch count if possible
+                if 'batch_info' in active_sessions[clean_phone]:
+                    batch_info = active_sessions[clean_phone]['batch_info']
+                    try:
+                        conn = sqlite3.connect('treehouse.db')
+                        c = conn.cursor()
+                        c.execute("""
+                            UPDATE batch_tracking 
+                            SET current_orders = current_orders - 1 
+                            WHERE id = ? AND current_orders > 0
+                        """, (batch_info['id'],))
+                        conn.commit()
+                        conn.close()
+                    except Exception as e:
+                        logger.error(f"Error updating batch count for cancellation: {e}")
+                
+                # Clear the order from the session
+                active_sessions[clean_phone].pop('order_text', None)
+                active_sessions[clean_phone].pop('restaurant', None)
+                active_sessions[clean_phone].pop('batch_info', None)
+                
+                response = f"Your {restaurant} order has been cancelled. If you'd like to place a new order, text 'MENU' to see options."
+                
+                # Notify admin about cancellation
+                if client:
+                    try:
+                        admin_note = f"ORDER CANCELLED!\n\n"
+                        admin_note += f"Customer: {from_number}\n"
+                        admin_note += f"Restaurant: {restaurant}\n"
+                        
+                        client.messages.create(
+                            body=admin_note,
+                            from_=twilio_phone,
+                            to=notification_email
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending admin notification for cancellation: {e}")
+            else:
+                # Too late to cancel
+                response = "Sorry, it's too late to cancel your order. Orders can only be cancelled within 10 minutes of placing them."
+        else:
+            # No active order to cancel
+            response = "You don't have an active order to cancel. Text 'MENU' to see restaurant options and place a new order."
+        
+        # Update conversation history
+        user_history.append({'role': 'user', 'content': incoming_message})
+        user_history.append({'role': 'assistant', 'content': response})
+        active_sessions[clean_phone]['conversation_history'] = user_history
         
         resp.message(response)
-        logger.info(f"Sent unknown command response to {from_number} using TwiML")
+        logger.info(f"Processed cancellation request from {from_number}")
+    
+    else:
+        # Process general message with AI assistance
+        # Check if OpenAI API is available
+        if openai_api_key:
+            # Use appropriate system instructions for the TreeHouse assistant
+            system_prompt = """
+            You are the TreeHouse food delivery assistant. You help users order food from nearby restaurants with low delivery fees.
+            
+            These are the main commands:
+            - MENU: Show available restaurants
+            - ORDER [food details]: Place an order
+            - PAY: Get a payment link
+            
+            When responding to users, be helpful, friendly, and concise. If you can't answer a specific question,
+            suggest texting 'MENU' to see restaurant options or 'ORDER' followed by what they want.
+            
+            Remember that TreeHouse offers $4 delivery from select restaurants, much lower than other delivery services.
+            Orders are delivered hourly - users need to order by :25-:30 of each hour to get food at the top of the next hour.
+            
+            If users share TreeHouse with friends, they can get free items like chips, cookies, or drinks.
+            """
+            
+            # Prepare messages for the API call
+            messages = [
+                {"role": "system", "content": system_prompt}
+            ]
+            
+            # Add conversation history
+            if len(user_history) > 0:
+                for entry in user_history[-6:]:  # Last 6 messages (3 exchanges)
+                    messages.append({
+                        "role": entry["role"],
+                        "content": entry["content"]
+                    })
+            
+            # Add the current message
+            messages.append({"role": "user", "content": incoming_message})
+            
+            try:
+                # Call OpenAI API
+                # Call OpenAI API
+                client = openai.OpenAI(api_key=openai_api_key)
+                ai_response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=messages,
+                    max_tokens=300,
+                    temperature=0.7
+                )
+                
+                # Extract the AI response
+                response = ai_response.choices[0].message.content
+                
+                # Add a suggestion to use the primary commands if not mentioned
+                if not any(keyword in response.lower() for keyword in ['menu', 'order', 'pay']):
+                    response += "\n\nText 'MENU' to see restaurant options or 'ORDER' followed by what you want."
+            except Exception as e:
+                logger.error(f"Error using OpenAI for conversation: {e}")
+                response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
+        else:
+            # Fallback response without AI
+            response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
+        
+        # Update conversation history
+        user_history.append({'role': 'user', 'content': incoming_message})
+        user_history.append({'role': 'assistant', 'content': response})
+        active_sessions[clean_phone]['conversation_history'] = user_history
+        
+        resp.message(response)
+        logger.info(f"Sent AI-powered response to {from_number} using TwiML")
     
     conn.close()
     return str(resp)
@@ -1079,56 +1793,102 @@ def test_sms_simple():
     
     user_id = user[0]
     
+    # Initialize conversation history in session if it doesn't exist
+    if clean_phone not in active_sessions or 'conversation_history' not in active_sessions[clean_phone]:
+        active_sessions[clean_phone] = active_sessions.get(clean_phone, {})
+        active_sessions[clean_phone]['conversation_history'] = []
+        active_sessions[clean_phone]['user_id'] = user_id
+    
+    user_history = active_sessions[clean_phone]['conversation_history']
+    
     # Handle the message based on content
-    if test_message.lower() in ['menu', 'restaurants']:
+    lower_message = test_message.lower()
+    first_word = lower_message.split(' ')[0]
+    
+    if first_word in ['menu', 'restaurants']:
         # Display restaurant list with links
-        restaurants = [
-            {"name": "Chick-fil-A", "link": "https://order.chick-fil-a.com/menu"},
-            {"name": "Panda Express", "link": "https://www.pandaexpress.com/location/roosevelt-canal-px/menu"},
-            {"name": "Subway", "link": "https://restaurants.subway.com/united-states/il/chicago/750-s-halsted-st"},
-            {"name": "Jim's Original", "link": "http://www.jimsoriginal.com/"},
-            {"name": "Al's Beef", "link": "https://www.alsbeef.com/chicago-little-italy-taylor-street"},
-            {"name": "Busy Burger", "link": "https://www.busyburger.com/menus"},
-            {"name": "Portillo's", "link": "https://order.portillos.com/menu/portillos-hot-dogs-chicago/"},
-            {"name": "Chipotle", "link": "https://locations.chipotle.com/il/chicago/1132-s-clinton-st"},
-            {"name": "Dunkin", "link": "https://locations.dunkindonuts.com/en/il/chicago/750-s-halsted-st-university/349361"},
-            {"name": "Au Bon Pain", "link": "https://www.aubonpain.com/menu"},
-            {"name": "Thai Bowl", "link": "http://places.singleplatform.com/thai-bowl-2/menu"},
-            {"name": "Mario's Italian Ice", "link": "http://www.marioslemonade.com/menu"},
-            {"name": "Gather Tea Bar", "link": "http://www.gathersteabar.com/"},
-            {"name": "Lulu's Hot Dogs", "link": "http://lulushotdogs.com/"}
-        ]
+        batches = get_current_batches()
+        response = format_batch_info(batches)
         
+        # Update conversation history
+        user_history.append({'role': 'user', 'content': test_message})
+        user_history.append({'role': 'assistant', 'content': response})
+        active_sessions[clean_phone]['conversation_history'] = user_history
+        
+        # Create HTML display of restaurants
         html_response += "<p><strong>Available Restaurants:</strong></p><ol>"
-        for restaurant in restaurants:
-            html_response += f"<li><a href='{restaurant['link']}' target='_blank'>{restaurant['name']}</a></li>"
+        for batch in batches:
+            restaurant = batch['restaurant_name']
+            location = batch['location']
+            current_orders = batch['current_orders']
+            max_orders = batch['max_orders']
+            fee = batch['delivery_fee']
+            
+            batch_time = datetime.fromisoformat(str(batch['batch_time'])) if isinstance(batch['batch_time'], str) else batch['batch_time']
+            batch_time_str = batch_time.strftime("%I:%M %p")
+            
+            html_response += f"<li><strong>{restaurant}</strong> ({location}, {batch_time_str}) - ${fee:.2f} delivery fee, {current_orders}/{max_orders} spots filled</li>"
         html_response += "</ol>"
         html_response += "<p>To order, text 'ORDER' followed by what you want. Don't see a restaurant you want? Call (708) 901-1754 to order.</p>"
         html_response += "<p>Text 'PAY' when you're ready to pay.</p>"
     
-    elif test_message.lower().startswith('order '):
+    elif first_word == 'order':
         # Process a free-form order
-        order_text = test_message[6:].strip()
-        
-        # Store in active session
-        import datetime as dt
-        if clean_phone not in active_sessions:
-            active_sessions[clean_phone] = {
-                'user_id': user_id,
-                'order_text': order_text,
-                'started_at': dt.datetime.now()
-            }
+        if len(test_message) <= 6:
+            html_response += "<p>Please tell us what you'd like to order by texting 'ORDER' followed by your items.</p>"
+            html_response += "<p>For example: 'ORDER 2 burritos from Chipotle with extra guac and chips'</p>"
+            
+            # Update conversation history
+            response = "Please tell us what you'd like to order by texting 'ORDER' followed by your items. For example: 'ORDER 2 burritos from Chipotle with guac and chips'"
+            user_history.append({'role': 'user', 'content': test_message})
+            user_history.append({'role': 'assistant', 'content': response})
+            active_sessions[clean_phone]['conversation_history'] = user_history
         else:
-            active_sessions[clean_phone]['order_text'] = order_text
-        
-        html_response += f"<p><strong>Order Received:</strong> {order_text}</p>"
-        html_response += "<p>Text 'PAY' to get a payment link.</p>"
+            # Extract order text (everything after "order ")
+            order_text = test_message[6:].strip()
+            
+            # Process the order with AI
+            ai_response, restaurant_name, batch_info = ai_process_order(order_text, clean_phone)
+            
+            # Store in active session
+            if clean_phone not in active_sessions:
+                import datetime as dt
+                active_sessions[clean_phone] = {
+                    'user_id': user_id,
+                    'order_text': order_text,
+                    'started_at': dt.datetime.now()
+                }
+                if restaurant_name:
+                    active_sessions[clean_phone]['restaurant'] = restaurant_name
+                if batch_info:
+                    active_sessions[clean_phone]['batch_info'] = batch_info
+            else:
+                active_sessions[clean_phone]['order_text'] = order_text
+                if restaurant_name:
+                    active_sessions[clean_phone]['restaurant'] = restaurant_name
+                if batch_info:
+                    active_sessions[clean_phone]['batch_info'] = batch_info
+            
+            # Update conversation history
+            user_history.append({'role': 'user', 'content': test_message})
+            user_history.append({'role': 'assistant', 'content': ai_response})
+            active_sessions[clean_phone]['conversation_history'] = user_history
+            
+            html_response += f"<p><strong>Order Response:</strong></p>"
+            html_response += f"<p>{ai_response}</p>"
+            
+            # Simulate admin notification
+            html_response += "<div style='margin-top: 20px; padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd;'>"
+            html_response += "<p><strong>Admin Notification:</strong></p>"
+            html_response += f"<p>NEW TEXT ORDER RECEIVED!<br/>Customer: {test_phone}</p>"
+            
+            if restaurant_name:
+                html_response += f"<p>Restaurant: {restaurant_name}</p>"
+            html_response += f"<p>Order: {order_text}</p>"
+            html_response += "<p>Customer will need to text 'PAY' to receive payment link.</p>"
+            html_response += "</div>"
     
-    elif test_message.lower() == 'order':
-        html_response += "<p>Please tell us what you'd like to order by texting 'ORDER' followed by your items.</p>"
-        html_response += "<p>For example: 'ORDER 2 burritos from Chipotle with extra guac and chips'</p>"
-    
-    elif test_message.lower() == 'pay':
+    elif first_word == 'pay':
         # Generate a payment link - either real Stripe or simulation
         import datetime as dt
         payment_session_id = f"pay_{clean_phone}_{int(dt.datetime.now().timestamp())}"
@@ -1137,13 +1897,20 @@ def test_sms_simple():
         # Default delivery fee (now $4)
         delivery_fee = 4.00
         
+        # Get delivery fee from batch info if available
+        has_active_order = clean_phone in active_sessions
+        if has_active_order and 'batch_info' in active_sessions[clean_phone]:
+            batch_info = active_sessions[clean_phone]['batch_info']
+            if batch_info and 'delivery_fee' in batch_info:
+                delivery_fee = float(batch_info['delivery_fee'])
+        
         # If Stripe is configured, create a real checkout session for testing
         if stripe_secret_key:
             try:
                 # Create a product for the food order
                 food_product = stripe.Product.create(
                     name="TreeHouse Food Order",
-                    description="Your food order + $4 delivery fee"
+                    description=f"Your food order + ${delivery_fee:.2f} delivery fee"
                 )
                 
                 # Create a price with custom_unit_amount enabled
@@ -1178,6 +1945,24 @@ def test_sms_simple():
                 
                 payment_session_id = checkout_session.id
                 payment_link = checkout_session.url
+                
+                # Create the payment response
+                response = "Here's your payment link:\n" + payment_link + "\n\n"
+                response += f"Please enter the TOTAL amount including BOTH your food cost AND the ${delivery_fee:.2f} delivery fee.\n"
+                response += f"For example, if your food costs $15, enter ${15 + delivery_fee:.2f} total."
+                
+                if has_active_order:
+                    order_text = active_sessions[clean_phone].get('order_text', '')
+                    restaurant = active_sessions[clean_phone].get('restaurant', '')
+                    response += f"\n\nFor reference, your order was: {order_text}"
+                    if restaurant:
+                        response += f"\nRestaurant: {restaurant}"
+                
+                # Update conversation history
+                user_history.append({'role': 'user', 'content': test_message})
+                user_history.append({'role': 'assistant', 'content': response})
+                active_sessions[clean_phone]['conversation_history'] = user_history
+                
                 html_response += "<p><strong>Real Stripe Checkout Created!</strong></p>"
                 html_response += "<p>Please enter the total amount including your food cost plus the $4 delivery fee.</p>"
                 html_response += "<p>For example, if your food costs $15, enter $19 total.</p>"
@@ -1187,10 +1972,36 @@ def test_sms_simple():
                 payment_link = f"https://checkout.stripe.com/pay/test_{payment_session_id}"
                 html_response += f"<p><strong>Error creating Stripe session:</strong> {str(e)}</p>"
                 html_response += "<p>Using simulation instead.</p>"
+                
+                # Create fallback response
+                response = "Here's your payment link:\n" + payment_link + "\n\n"
+                response += f"Please enter the total amount including both your food cost AND the ${delivery_fee:.2f} delivery fee."
+                
+                if has_active_order:
+                    order_text = active_sessions[clean_phone].get('order_text', '')
+                    response += f"\n\nFor reference, your order was: {order_text}"
+                
+                # Update conversation history
+                user_history.append({'role': 'user', 'content': test_message})
+                user_history.append({'role': 'assistant', 'content': response})
+                active_sessions[clean_phone]['conversation_history'] = user_history
         else:
             # Use a simulation
             payment_link = f"https://checkout.stripe.com/pay/test_{payment_session_id}"
             html_response += "<p>Stripe not configured. Using simulation.</p>"
+            
+            # Create fallback response
+            response = "Here's your payment link:\n" + payment_link + "\n\n"
+            response += f"Please enter the total amount including both your food cost AND the ${delivery_fee:.2f} delivery fee."
+            
+            if has_active_order:
+                order_text = active_sessions[clean_phone].get('order_text', '')
+                response += f"\n\nFor reference, your order was: {order_text}"
+            
+            # Update conversation history
+            user_history.append({'role': 'user', 'content': test_message})
+            user_history.append({'role': 'assistant', 'content': response})
+            active_sessions[clean_phone]['conversation_history'] = user_history
         
         # Store or update in active session
         if clean_phone not in active_sessions:
@@ -1252,6 +2063,36 @@ def test_sms_simple():
         simulation = request.args.get('simulation', 'false')
         session_id = request.args.get('session_id', payment_session_id if 'payment_session_id' in locals() else '')
         
+        # Create payment confirmation response
+        batch_time_str = "upcoming batch"
+        if clean_phone in active_sessions and 'batch_info' in active_sessions[clean_phone]:
+            batch_info = active_sessions[clean_phone]['batch_info']
+            if batch_info and 'batch_time' in batch_info:
+                batch_time = batch_info['batch_time']
+                batch_time_str = datetime.fromisoformat(str(batch_time)).strftime("%I:%M %p") if isinstance(batch_time, str) else batch_time.strftime("%I:%M %p")
+        
+        restaurant = "your restaurant"
+        batch_location = "your location"
+        if clean_phone in active_sessions:
+            restaurant = active_sessions[clean_phone].get('restaurant', 'your restaurant')
+            if 'batch_info' in active_sessions[clean_phone]:
+                batch_info = active_sessions[clean_phone]['batch_info']
+                if batch_info and 'location' in batch_info:
+                    batch_location = batch_info['location']
+        
+        # Create simulated confirmation message
+        ai_response = f"""Payment confirmed! Your {restaurant} order is set for pickup at {batch_location} between {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:]}.
+
+Your batch is currently 5/10 full.
+
+We'll text you when the batch is locked in.
+
+Reply "CANCEL" within the next 10 minutes if you need to cancel."""
+        
+        # Add to conversation history
+        user_history.append({'role': 'assistant', 'content': ai_response})
+        active_sessions[clean_phone]['conversation_history'] = user_history
+        
         success_html = f"""
         <div style="margin-top: 20px; padding: 20px; background-color: #d4edda; border-radius: 8px; text-align: center;">
             <h3 style="color: #155724; margin-top:0;">Payment Successful!</h3>
@@ -1259,8 +2100,42 @@ def test_sms_simple():
             <p>Session ID: {session_id}</p>
             <p>{'(Simulated payment)' if simulation == 'true' else ''}</p>
         </div>
+        
+        <div style="margin-top: 20px; padding: 15px; background-color: #e9f7ef; border: 1px solid #ddd; border-radius: 8px;">
+            <p><strong>Payment Confirmation Message:</strong></p>
+            <p style="white-space: pre-line;">{ai_response}</p>
+        </div>
         """
         html_response += success_html
+        
+        # Simulate batch confirmation after 30 seconds (in real system)
+        if has_active_order:
+            batch_confirm = f"""Your {restaurant} batch is locked in!
+
+5 orders total. Delivery to {batch_location} at {batch_time_str}.
+
+Your pickup window: {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:]}"""
+            
+            html_response += f"""
+            <div style="margin-top: 20px; padding: 15px; background-color: #f0f5ff; border: 1px solid #cce5ff; border-radius: 8px;">
+                <p><strong>30 Seconds Later - Batch Confirmation Message:</strong></p>
+                <p style="white-space: pre-line;">{batch_confirm}</p>
+                <p><em>(In the real system, this would be sent when the batch is confirmed)</em></p>
+            </div>
+            """
+            
+            # Add follow-up message
+            follow_up = """Thanks for using TreeHouse! Hope you enjoyed your meal.
+
+Next batch opens at 1:25 PM. Text anything to see options!"""
+            
+            html_response += f"""
+            <div style="margin-top: 20px; padding: 15px; background-color: #fff5e6; border: 1px solid #ffe0b2; border-radius: 8px;">
+                <p><strong>After Delivery - Follow-up Message:</strong></p>
+                <p style="white-space: pre-line;">{follow_up}</p>
+                <p><em>(In the real system, this would be sent after the scheduled pickup time)</em></p>
+            </div>
+            """
     elif result == 'cancel':
         cancel_html = """
         <div style="margin-top: 20px; padding: 20px; background-color: #f8d7da; border-radius: 8px; text-align: center;">
@@ -1270,7 +2145,21 @@ def test_sms_simple():
         """
         html_response += cancel_html
     
-    elif test_message.lower() in ['help', 'info']:
+    elif first_word in ['help', 'info']:
+        # Create help response
+        response = "TreeHouse - Restaurant delivery for ONLY $4!\n\n"
+        response += "Commands:\n"
+        response += "• Text 'MENU' to see available restaurants\n"
+        response += "• Text 'ORDER' followed by what you want (e.g., 'ORDER 2 burritos from Chipotle')\n"
+        response += "• Text 'PAY' to get a payment link\n"
+        response += "• Call (708) 901-1754 for special orders or questions\n\n"
+        response += "Food is delivered hourly. Order by :25-:30 of each hour to get your food at the top of the next hour."
+        
+        # Update conversation history
+        user_history.append({'role': 'user', 'content': test_message})
+        user_history.append({'role': 'assistant', 'content': response})
+        active_sessions[clean_phone]['conversation_history'] = user_history
+        
         html_response += "<p><strong>TreeHouse Help</strong></p>"
         html_response += "<ul>"
         html_response += "<li>Text 'MENU' to see available restaurants</li>"
@@ -1281,10 +2170,94 @@ def test_sms_simple():
         html_response += "<p>Food is delivered hourly. Order by :25-:30 of each hour to get your food at the top of the next hour.</p>"
     
     else:
-        html_response += "<p>I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link.</p>"
-        html_response += "<p>Need help? Text 'HELP' or call (708) 901-1754.</p>"
-    
-    conn.close()
+        # Process general message with AI
+        # Check if OpenAI API is available
+        if openai_api_key:
+            # Use appropriate system instructions for the TreeHouse assistant
+            system_prompt = """
+            You are the TreeHouse food delivery assistant. You help users order food from nearby restaurants with low delivery fees.
+            
+            These are the main commands:
+            - MENU: Show available restaurants
+            - ORDER [food details]: Place an order
+            - PAY: Get a payment link
+            
+            When responding to users, be helpful, friendly, and concise. If you can't answer a specific question,
+            suggest texting 'MENU' to see restaurant options or 'ORDER' followed by what they want.
+            
+            Remember that TreeHouse offers $4 delivery from select restaurants, much lower than other delivery services.
+            Orders are delivered hourly - users need to order by :25-:30 of each hour to get food at the top of the next hour.
+            
+            If users share TreeHouse with friends, they can get free items like chips, cookies, or drinks.
+            """
+            
+            # Prepare messages for the API call
+            messages = [
+                {"role": "system", "content": system_prompt}
+            ]
+            
+            # Add conversation history
+            if len(user_history) > 0:
+                for entry in user_history[-6:]:  # Last 6 messages (3 exchanges)
+                    messages.append({
+                        "role": entry["role"],
+                        "content": entry["content"]
+                    })
+            
+            # Add the current message
+            messages.append({"role": "user", "content": test_message})
+            
+            try:
+                # Call OpenAI API
+                # Call OpenAI API
+                client = openai.OpenAI(api_key=openai_api_key)
+                ai_response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=messages,
+                    max_tokens=300,
+                    temperature=0.7
+                )
+                
+                # Extract the AI response
+                response = ai_response.choices[0].message.content
+                
+                # Add a suggestion to use the primary commands if not mentioned
+                if not any(keyword in response.lower() for keyword in ['menu', 'order', 'pay']):
+                    response += "\n\nText 'MENU' to see restaurant options or 'ORDER' followed by what you want."
+                
+                # Update conversation history
+                user_history.append({'role': 'user', 'content': test_message})
+                user_history.append({'role': 'assistant', 'content': response})
+                active_sessions[clean_phone]['conversation_history'] = user_history
+                
+                html_response += "<p><strong>AI-Powered Response:</strong></p>"
+                html_response += f"<p style='white-space: pre-line;'>{response}</p>"
+                html_response += "<p><em>(Response generated by OpenAI's model)</em></p>"
+                
+            except Exception as e:
+                logger.error(f"Error using OpenAI for conversation: {e}")
+                response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
+                
+                # Update conversation history
+                user_history.append({'role': 'user', 'content': test_message})
+                user_history.append({'role': 'assistant', 'content': response})
+                active_sessions[clean_phone]['conversation_history'] = user_history
+                
+                html_response += "<p><strong>Fallback Response (OpenAI Error):</strong></p>"
+                html_response += f"<p>{response}</p>"
+                html_response += f"<p><em>Error: {str(e)}</em></p>"
+        else:
+            # Fallback response without AI
+            response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
+            
+            # Update conversation history
+            user_history.append({'role': 'user', 'content': test_message})
+            user_history.append({'role': 'assistant', 'content': response})
+            active_sessions[clean_phone]['conversation_history'] = user_history
+            
+            html_response += "<p><strong>Standard Response:</strong></p>"
+            html_response += f"<p>{response}</p>"
+            html_response += "<p><em>(OpenAI not configured - using standard response)</em></p>"
     
     # Display active session if it exists
     if clean_phone in active_sessions:
@@ -1292,11 +2265,34 @@ def test_sms_simple():
         html_response += "<div style='margin-top: 20px; padding: 10px; background-color: #e9f7ef; border: 1px solid #ddd;'>"
         html_response += "<p><strong>Current Session Info:</strong></p>"
         
-        for key, value in session_info.items():
-            if key != 'started_at':  # Skip the timestamp for clarity
-                html_response += f"<p>{key}: {value}</p>"
+        # Show only non-sensitive, non-history keys
+        safe_session = {k: v for k, v in session_info.items() if k != 'conversation_history'}
+        html_response += "<table style='width: 100%; border-collapse: collapse;'>"
+        for key, value in safe_session.items():
+            if key == 'started_at':  # Format datetime
+                if isinstance(value, datetime):
+                    value = value.strftime("%Y-%m-%d %H:%M:%S")
+            elif key == 'batch_info' and isinstance(value, dict):  # Format batch dict
+                value = "<pre>" + str({k: (v.strftime("%Y-%m-%d %H:%M:%S") if k == 'batch_time' and isinstance(v, datetime) else v) for k, v in value.items()}) + "</pre>"
+            elif key == 'batch_time' and isinstance(value, datetime):  # Format datetime
+                value = value.strftime("%Y-%m-%d %H:%M:%S")
                 
+            html_response += f"<tr><td style='padding: 5px; border: 1px solid #ddd; font-weight: bold;'>{key}</td><td style='padding: 5px; border: 1px solid #ddd;'>{value}</td></tr>"
+        html_response += "</table>"
+        
+        # Add conversation history with short preview
+        if 'conversation_history' in session_info and session_info['conversation_history']:
+            html_response += "<p><strong>Conversation Preview:</strong></p>"
+            html_response += "<div style='max-height: 150px; overflow-y: auto; border: 1px solid #ddd; padding: 5px;'>"
+            for i, entry in enumerate(session_info['conversation_history'][-4:]):  # Show last 4 entries
+                role = entry['role']
+                content = entry['content'][:50] + "..." if len(entry['content']) > 50 else entry['content']
+                html_response += f"<p><strong>{role.title()}:</strong> {content}</p>"
+            html_response += "</div>"
+        
         html_response += "</div>"
+    
+    conn.close()
     
     # Form for testing
     return f"""
@@ -1340,13 +2336,13 @@ def test_sms_simple():
                     <li><code>order 2 burritos from Chipotle with extra guac</code> - Place a free-form order</li>
                     <li><code>pay</code> - Get a payment link</li>
                     <li><code>help</code> or <code>info</code> - Get help information</li>
+                    <li><code>cancel</code> - Cancel your current order (within 10 minutes)</li>
+                    <li>Try asking a general question - AI will respond if configured</li>
                 </ul>
             </div>
         </body>
     </html>
     """
-
-
 
 @app.route('/payment-success')
 def payment_success():
@@ -1448,20 +2444,86 @@ def stripe_webhook():
                 # Notify the user about successful payment
                 if client:
                     try:
+                        # Get batch information if available
+                        batch_time_str = "upcoming batch"
+                        restaurant = "your order"
+                        batch_location = "your location"
+                        
+                        if phone_number in active_sessions:
+                            phone_session = active_sessions[phone_number]
+                            restaurant = phone_session.get('restaurant', 'your order')
+                            
+                            if 'batch_info' in phone_session:
+                                batch_info = phone_session['batch_info']
+                                
+                                if batch_info and 'batch_time' in batch_info:
+                                    batch_time = batch_info['batch_time']
+                                    batch_time_str = datetime.fromisoformat(str(batch_time)).strftime("%I:%M %p") if isinstance(batch_time, str) else batch_time.strftime("%I:%M %p")
+                                
+                                if batch_info and 'location' in batch_info:
+                                    batch_location = batch_info['location']
+                        
+                        # Create confirmation message
+                        confirmation = f"""Payment confirmed! Your {restaurant} order is set for pickup at {batch_location} between {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:]}.
+
+Your batch is currently 5/10 full.
+
+We'll text you when the batch is locked in.
+
+Reply "CANCEL" within the next 10 minutes if you need to cancel."""
+                        
                         message = client.messages.create(
-                            body=f"Payment received! Amount: ${payment_amount:.2f}. Your order will be delivered soon.",
+                            body=confirmation,
                             from_=twilio_phone,
                             to=f"+{phone_number}"
                         )
                         logger.info(f"Payment confirmation sent to +{phone_number}")
+                        
+                        # Also simulate the "batch locked in" message after 30 seconds
+                        import threading
+                        def send_batch_confirmation():
+                            time.sleep(30)  # Wait 30 seconds
+                            try:
+                                batch_confirm = f"""Your {restaurant} batch is locked in!
+
+5 orders total. Delivery to {batch_location} at {batch_time_str}.
+
+Your pickup window: {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:]}"""
+                                
+                                client.messages.create(
+                                    body=batch_confirm,
+                                    from_=twilio_phone,
+                                    to=f"+{phone_number}"
+                                )
+                                logger.info(f"Batch confirmation sent to +{phone_number}")
+                            except Exception as e:
+                                logger.error(f"Error sending batch confirmation: {e}")
+                        
+                        # Start the timer thread
+                        timer_thread = threading.Thread(target=send_batch_confirmation)
+                        timer_thread.daemon = True
+                        timer_thread.start()
+                        
                     except Exception as e:
                         logger.error(f"Error sending payment confirmation: {e}")
                 
                 # Notify admin about payment
                 if client:
                     try:
+                        # Get order details if available
+                        order_details = ""
+                        if phone_number in active_sessions:
+                            order_text = active_sessions[phone_number].get('order_text', '')
+                            restaurant = active_sessions[phone_number].get('restaurant', '')
+                            
+                            if order_text:
+                                order_details = f"\nOrder: {order_text}"
+                            
+                            if restaurant:
+                                order_details += f"\nRestaurant: {restaurant}"
+                        
                         client.messages.create(
-                            body=f"Payment received! Phone: +{phone_number}, Amount: ${payment_amount:.2f}, Stripe ID: {payment_id}",
+                            body=f"Payment received! Phone: +{phone_number}, Amount: ${payment_amount:.2f}, Stripe ID: {payment_id}{order_details}",
                             from_=twilio_phone,
                             to=notification_email
                         )
