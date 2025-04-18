@@ -1,12 +1,12 @@
 import os
-from twilio.rest import Client
+import requests  # For making HTTP requests to Textbelt API
+import json      # For JSON parsing
 from dotenv import load_dotenv
 import logging
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import sqlite3
-from twilio.twiml.messaging_response import MessagingResponse
 import stripe
 import openai
 import random
@@ -157,21 +157,15 @@ def init_db():
 # Initialize the database when the app starts
 init_db()
 
-# Twilio setup
-account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
-notification_email = os.getenv('NOTIFICATION_EMAIL')
+textbelt_api_key = os.getenv('TEXTBELT_API_KEY')
+notification_phone = os.getenv('NOTIFICATION_PHONE')
+webhook_url = os.getenv('WEBHOOK_URL')
+sender_name = os.getenv('SENDER_NAME', 'TreeHouse')
 
-client = None
-if account_sid and auth_token:
-    try:
-        client = Client(account_sid, auth_token)
-        logger.info("Twilio client initialized successfully")
-    except Exception as e:
-        logger.error(f"Error initializing Twilio client: {e}")
+if textbelt_api_key:
+    logger.info("Textbelt API key configured successfully")
 else:
-    logger.warning("Twilio credentials not found or incomplete")
+    logger.warning("Textbelt API key not found")
 
 # Stripe setup
 stripe_secret_key = os.getenv('STRIPE_SECRET_KEY')
@@ -295,29 +289,7 @@ def signup():
         if user:
             # Update existing user if more info provided
             if any([name, email, dorm_building, room_number]):
-                query = "UPDATE users SET "
-                params = []
-                
-                if name:
-                    query += "name = ?, "
-                    params.append(name)
-                if email:
-                    query += "email = ?, "
-                    params.append(email)
-                if dorm_building:
-                    query += "dorm_building = ?, "
-                    params.append(dorm_building)
-                if room_number:
-                    query += "room_number = ?, "
-                    params.append(room_number)
-                
-                # Remove the trailing comma and space
-                query = query.rstrip(", ")
-                query += " WHERE phone_number = ?"
-                params.append(clean_phone)
-                
-                c.execute(query, params)
-                conn.commit()
+                # [existing code for updating user...]
                 is_new_user = False
                 user_id = user[0]
             else:
@@ -335,15 +307,25 @@ def signup():
         conn.commit()
         conn.close()
         
-        # Send notification via Twilio if it's a new user
-        if is_new_user and client:
+        # Send notification via Textbelt if it's a new user
+        if is_new_user:
             try:
-                message = client.messages.create(
-                    body=f"New TreeHouse signup! Phone: {phone_number}, Dorm/Building: {dorm_building or 'Not specified'}",
-                    from_=twilio_phone,
-                    to=notification_email
-                )
-                logger.info(f"Notification sent: {message.sid}")
+                # Send notification to admin (your existing code)
+                admin_note = f"New TreeHouse signup! Phone: {phone_number}, Dorm/Building: {dorm_building or 'Not specified'}"
+                notification_phone = os.getenv('NOTIFICATION_PHONE')
+                send_sms(notification_phone, admin_note)
+                logger.info(f"Signup notification sent to admin")
+                
+                # NEW CODE: Send welcome message to the user
+                welcome_message = f"Welcome to TreeHouse, {name or 'there'}! 🌮 Save this number to order food with just $4 delivery fees.\n\n"
+                welcome_message += "How to order:\n"
+                welcome_message += "• Text 'MENU' to see available restaurants\n"
+                welcome_message += "• Text 'ORDER' followed by what you want (e.g., 'ORDER 2 burritos from Chipotle')\n"
+                welcome_message += "• Text 'PAY' to get a payment link\n\n"
+                welcome_message += "Orders are delivered hourly. Share with friends and you both get free items!"
+                
+                send_sms(phone_number, welcome_message)
+                logger.info(f"Welcome message sent to new user: {phone_number}")
             except Exception as e:
                 logger.error(f"Error sending notification: {e}")
         
@@ -480,98 +462,90 @@ def create_order():
         
         conn.commit()
         
-        # Send notification via Twilio
-        if client:
-            try:
-                # Get user info for notification
-                c.execute("SELECT phone_number FROM users WHERE id = ?", (user_id,))
-                user_result = c.fetchone()
-                user_phone = user_result[0] if user_result else "Unknown"
-                
-                message = client.messages.create(
-                    body=f"New TreeHouse order! Order ID: {order_id}, Amount: ${total_amount:.2f}, User: {user_phone}",
-                    from_=twilio_phone,
-                    to=notification_email
-                )
-                logger.info(f"Order notification sent: {message.sid}")
-            except Exception as e:
-                logger.error(f"Error sending order notification: {e}")
+        # Send notification using Textbelt
+        try:
+            # Get user info for notification
+            c.execute("SELECT phone_number FROM users WHERE id = ?", (user_id,))
+            user_result = c.fetchone()
+            user_phone = user_result[0] if user_result else "Unknown"
+            
+            notification_message = f"New TreeHouse order! Order ID: {order_id}, Amount: ${total_amount:.2f}, User: {user_phone}"
+            notification_phone = os.getenv('NOTIFICATION_PHONE')
+            send_sms(notification_phone, notification_message)
+            logger.info(f"Order notification sent via Textbelt")
+        except Exception as e:
+            logger.error(f"Error sending order notification: {e}")
         
-        # Inside your create_order function, add this before conn.close()
         # Send detailed notification to admin
-        if client:
-            try:
-                # Get user details
-                c.execute("SELECT phone_number, name, dorm_building, room_number FROM users WHERE id = ?", (user_id,))
-                user_details = c.fetchone()
-                user_phone = user_details[0] if user_details else "Unknown"
-                user_name = user_details[1] if user_details and user_details[1] else "Unknown"
-                dorm = user_details[2] if user_details and user_details[2] else "Unknown"
-                room = user_details[3] if user_details and user_details[3] else "Unknown"
+        try:
+            # Get user details
+            c.execute("SELECT phone_number, name, dorm_building, room_number FROM users WHERE id = ?", (user_id,))
+            user_details = c.fetchone()
+            user_phone = user_details[0] if user_details else "Unknown"
+            user_name = user_details[1] if user_details and user_details[1] else "Unknown"
+            dorm = user_details[2] if user_details and user_details[2] else "Unknown"
+            room = user_details[3] if user_details and user_details[3] else "Unknown"
+            
+            # Get item details
+            item_details = []
+            for item in items:
+                item_id = item.get('menu_item_id')
+                quantity = item.get('quantity', 1)
+                special_instructions = item.get('special_instructions', '')
                 
-                # Get item details
-                item_details = []
+                c.execute("""
+                    SELECT mi.item_name, mi.price, m.restaurant_name
+                    FROM menu_items mi
+                    JOIN menus m ON mi.menu_id = m.id
+                    WHERE mi.id = ?
+                """, (item_id,))
+                
+                item_info = c.fetchone()
+                if item_info:
+                    item_details.append({
+                        'name': item_info[0],
+                        'price': float(item_info[1]),
+                        'quantity': quantity,
+                        'special': special_instructions,
+                        'restaurant': item_info[2]
+                    })
+            
+            # Build detailed notification
+            admin_note = f"NEW WEBSITE ORDER #{order_id}!\n\n"
+            admin_note += f"Customer: {user_name} ({user_phone})\n"
+            admin_note += f"Location: {dorm}, Room {room}\n\n"
+            
+            # Group by restaurant
+            restaurants = {}
+            for item in item_details:
+                if item['restaurant'] not in restaurants:
+                    restaurants[item['restaurant']] = []
+                restaurants[item['restaurant']].append(item)
+            
+            for restaurant, items in restaurants.items():
+                admin_note += f"--- {restaurant} ---\n"
                 for item in items:
-                    item_id = item.get('menu_item_id')
-                    quantity = item.get('quantity', 1)
-                    special_instructions = item.get('special_instructions', '')
-                    
-                    c.execute("""
-                        SELECT mi.item_name, mi.price, m.restaurant_name
-                        FROM menu_items mi
-                        JOIN menus m ON mi.menu_id = m.id
-                        WHERE mi.id = ?
-                    """, (item_id,))
-                    
-                    item_info = c.fetchone()
-                    if item_info:
-                        item_details.append({
-                            'name': item_info[0],
-                            'price': float(item_info[1]),
-                            'quantity': quantity,
-                            'special': special_instructions,
-                            'restaurant': item_info[2]
-                        })
-                
-                # Build detailed notification
-                admin_note = f"NEW WEBSITE ORDER #{order_id}!\n\n"
-                admin_note += f"Customer: {user_name} ({user_phone})\n"
-                admin_note += f"Location: {dorm}, Room {room}\n\n"
-                
-                # Group by restaurant
-                restaurants = {}
-                for item in item_details:
-                    if item['restaurant'] not in restaurants:
-                        restaurants[item['restaurant']] = []
-                    restaurants[item['restaurant']].append(item)
-                
-                for restaurant, items in restaurants.items():
-                    admin_note += f"--- {restaurant} ---\n"
-                    for item in items:
-                        admin_note += f"{item['quantity']}x {item['name']} - ${item['price'] * item['quantity']:.2f}\n"
-                        if item['special']:
-                            admin_note += f"  Special: {item['special']}\n"
-                    admin_note += "\n"
-                
-                admin_note += f"Delivery fee: ${delivery_fee:.2f}\n"
-                admin_note += f"Total: ${total_amount:.2f}\n"
-                
-                if scheduled_time:
-                    # Format the scheduled time
-                    from datetime import datetime
-                    scheduled_dt = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
-                    time_str = scheduled_dt.strftime("%I:%M %p on %m/%d/%Y")
-                    admin_note += f"\nScheduled for: {time_str}"
-                
-                # Send to your notification number
-                client.messages.create(
-                    body=admin_note,
-                    from_=twilio_phone,
-                    to=notification_email  # Make sure this is your phone number
-                )
-                logger.info(f"Admin order notification sent for order #{order_id}")
-            except Exception as e:
-                logger.error(f"Error sending detailed admin notification: {e}")
+                    admin_note += f"{item['quantity']}x {item['name']} - ${item['price'] * item['quantity']:.2f}\n"
+                    if item['special']:
+                        admin_note += f"  Special: {item['special']}\n"
+                admin_note += "\n"
+            
+            admin_note += f"Delivery fee: ${delivery_fee:.2f}\n"
+            admin_note += f"Total: ${total_amount:.2f}\n"
+            
+            if scheduled_time:
+                # Format the scheduled time
+                from datetime import datetime
+                scheduled_dt = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+                time_str = scheduled_dt.strftime("%I:%M %p on %m/%d/%Y")
+                admin_note += f"\nScheduled for: {time_str}"
+            
+            # Send to admin via Textbelt
+            notification_phone = os.getenv('NOTIFICATION_PHONE')
+            send_sms(notification_phone, admin_note)
+            logger.info(f"Admin order notification sent for order #{order_id}")
+        except Exception as e:
+            logger.error(f"Error sending detailed admin notification: {e}")
         
         conn.close()
         return jsonify({
@@ -716,23 +690,20 @@ def process_payment():
         
         conn.commit()
         
-        # Send notification via Twilio
-        if client:
-            try:
-                # Get user info for notification
-                user_id = order[2]
-                c.execute("SELECT phone_number FROM users WHERE id = ?", (user_id,))
-                user_result = c.fetchone()
-                user_phone = user_result[0] if user_result else "Unknown"
-                
-                message = client.messages.create(
-                    body=f"Payment received! Order ID: {order_id}, Amount: ${payment_amount:.2f}, User: {user_phone}",
-                    from_=twilio_phone,
-                    to=notification_email
-                )
-                logger.info(f"Payment notification sent: {message.sid}")
-            except Exception as e:
-                logger.error(f"Error sending payment notification: {e}")
+        # Send notification via Textbelt
+        try:
+            # Get user info for notification
+            user_id = order[2]
+            c.execute("SELECT phone_number FROM users WHERE id = ?", (user_id,))
+            user_result = c.fetchone()
+            user_phone = user_result[0] if user_result else "Unknown"
+            
+            notification_message = f"Payment received! Order ID: {order_id}, Amount: ${payment_amount:.2f}, User: {user_phone}"
+            notification_phone = os.getenv('NOTIFICATION_PHONE')
+            send_sms(notification_phone, notification_message)
+            logger.info(f"Payment notification sent via Textbelt")
+        except Exception as e:
+            logger.error(f"Error sending payment notification: {e}")
         
         conn.close()
         
@@ -1305,9 +1276,22 @@ def ai_process_order(order_text, phone_number):
 
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
-    # Get the incoming message details
-    incoming_message = request.values.get('Body', '').strip()
-    from_number = request.values.get('From', '')
+    # Get the incoming message details from Textbelt webhook
+    data = request.get_json()
+    
+    # Extract text and phone number from Textbelt webhook payload
+    incoming_message = data.get('text', '').strip()
+    from_number = data.get('fromNumber', '')
+    text_id = data.get('textId', '')  # Textbelt's ID of the original message
+    
+    # Verify the webhook signature if needed
+    timestamp = request.headers.get('X-textbelt-timestamp')
+    signature = request.headers.get('X-textbelt-signature')
+    textbelt_api_key = os.getenv('TEXTBELT_API_KEY')
+    
+    # Uncomment this to enable signature verification
+    # if not verify(textbelt_api_key, timestamp, signature, request.data.decode('utf-8')):
+    #     return jsonify({"error": "Invalid signature"}), 401
     
     # Clean the phone number
     clean_phone = ''.join(filter(str.isdigit, from_number))
@@ -1329,9 +1313,6 @@ def sms_webhook():
         welcome_msg = ""
     
     user_id = user[0]
-    
-    # Create a TwiML response
-    resp = MessagingResponse()
     
     # Get user history for AI context
     user_history = []
@@ -1360,8 +1341,9 @@ def sms_webhook():
         user_history.append({'role': 'assistant', 'content': response})
         active_sessions[clean_phone]['conversation_history'] = user_history
         
-        resp.message(response)
-        logger.info(f"Sent restaurant list to {from_number} using TwiML")
+        # Send response via Textbelt
+        send_sms(from_number, response)
+        logger.info(f"Sent restaurant list to {from_number} using Textbelt")
         
     elif first_word == 'order':
         # Process order with free-form text
@@ -1394,7 +1376,7 @@ def sms_webhook():
                     active_sessions[clean_phone]['batch_info'] = batch_info
             
             # Send notification to admin
-            if client and restaurant_name:
+            if restaurant_name:
                 try:
                     # Get user details if available
                     c.execute("SELECT name, dorm_building, room_number FROM users WHERE id = ?", (user_id,))
@@ -1411,11 +1393,9 @@ def sms_webhook():
                     admin_note += f"Order: {order_text}\n\n"
                     admin_note += "Customer will need to text 'PAY' to receive payment link."
                     
-                    client.messages.create(
-                        body=admin_note,
-                        from_=twilio_phone,
-                        to=notification_email
-                    )
+                    # Send to admin using Textbelt
+                    notification_phone = os.getenv('NOTIFICATION_PHONE')
+                    send_sms(notification_phone, admin_note)
                     logger.info(f"Admin notification sent for new text order from {from_number}")
                 except Exception as e:
                     logger.error(f"Error sending admin notification: {e}")
@@ -1428,8 +1408,9 @@ def sms_webhook():
         user_history.append({'role': 'assistant', 'content': response})
         active_sessions[clean_phone]['conversation_history'] = user_history
         
-        resp.message(response)
-        logger.info(f"Processed order request from {from_number} using TwiML")
+        # Send via Textbelt
+        send_sms(from_number, response)
+        logger.info(f"Processed order request from {from_number} using Textbelt")
         
     elif first_word == 'pay':
         # Check if they have an active order
@@ -1522,29 +1503,27 @@ def sms_webhook():
                 user_history.append({'role': 'assistant', 'content': response})
                 active_sessions[clean_phone]['conversation_history'] = user_history
                 
-                resp.message(response)
-                logger.info(f"Sent Stripe payment link to {from_number} using TwiML")
+                # Send via Textbelt
+                send_sms(from_number, response)
+                logger.info(f"Sent Stripe payment link to {from_number} using Textbelt")
                 
                 # Send notification to admin
-                if client:
-                    try:
-                        admin_note = f"PAYMENT REQUESTED!\n\n"
-                        admin_note += f"Customer: {from_number}\n"
-                        if has_active_order:
-                            restaurant = active_sessions[clean_phone].get('restaurant', 'Unknown')
-                            admin_note += f"Restaurant: {restaurant}\n"
-                            admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
-                        else:
-                            admin_note += "Note: Customer likely called in their order\n"
-                        admin_note += f"Stripe Session ID: {payment_session_id}"
-                        
-                        client.messages.create(
-                            body=admin_note,
-                            from_=twilio_phone,
-                            to=notification_email
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending admin notification: {e}")
+                try:
+                    admin_note = f"PAYMENT REQUESTED!\n\n"
+                    admin_note += f"Customer: {from_number}\n"
+                    if has_active_order:
+                        restaurant = active_sessions[clean_phone].get('restaurant', 'Unknown')
+                        admin_note += f"Restaurant: {restaurant}\n"
+                        admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
+                    else:
+                        admin_note += "Note: Customer likely called in their order\n"
+                    admin_note += f"Stripe Session ID: {payment_session_id}"
+                    
+                    # Send to admin via Textbelt
+                    notification_phone = os.getenv('NOTIFICATION_PHONE')
+                    send_sms(notification_phone, admin_note)
+                except Exception as e:
+                    logger.error(f"Error sending admin notification: {e}")
                         
             except Exception as e:
                 logger.error(f"Error creating Stripe session: {e}")
@@ -1555,7 +1534,8 @@ def sms_webhook():
                 user_history.append({'role': 'assistant', 'content': response})
                 active_sessions[clean_phone]['conversation_history'] = user_history
                 
-                resp.message(response)
+                # Send via Textbelt
+                send_sms(from_number, response)
         else:
             # Fallback to the placeholder payment link if Stripe is not configured
             import datetime as dt
@@ -1587,28 +1567,26 @@ def sms_webhook():
             user_history.append({'role': 'assistant', 'content': response})
             active_sessions[clean_phone]['conversation_history'] = user_history
             
-            resp.message(response)
-            logger.info(f"Sent placeholder payment link to {from_number} using TwiML (Stripe not configured)")
+            # Send via Textbelt
+            send_sms(from_number, response)
+            logger.info(f"Sent placeholder payment link to {from_number} using Textbelt (Stripe not configured)")
             
             # Send notification to admin
-            if client:
-                try:
-                    admin_note = f"PAYMENT REQUESTED!\n\n"
-                    admin_note += f"Customer: {from_number}\n"
-                    if has_active_order:
-                        restaurant = active_sessions[clean_phone].get('restaurant', 'Unknown')
-                        admin_note += f"Restaurant: {restaurant}\n"
-                        admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
-                    else:
-                        admin_note += "Note: Customer likely called in their order\n"
-                    
-                    client.messages.create(
-                        body=admin_note,
-                        from_=twilio_phone,
-                        to=notification_email
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending admin notification: {e}")
+            try:
+                admin_note = f"PAYMENT REQUESTED!\n\n"
+                admin_note += f"Customer: {from_number}\n"
+                if has_active_order:
+                    restaurant = active_sessions[clean_phone].get('restaurant', 'Unknown')
+                    admin_note += f"Restaurant: {restaurant}\n"
+                    admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
+                else:
+                    admin_note += "Note: Customer likely called in their order\n"
+                
+                # Send to admin via Textbelt
+                notification_phone = os.getenv('NOTIFICATION_PHONE')
+                send_sms(notification_phone, admin_note)
+            except Exception as e:
+                logger.error(f"Error sending admin notification: {e}")
     
     elif first_word in ['help', 'info']:
         # Provide help information
@@ -1625,8 +1603,9 @@ def sms_webhook():
         user_history.append({'role': 'assistant', 'content': response})
         active_sessions[clean_phone]['conversation_history'] = user_history
         
-        resp.message(response)
-        logger.info(f"Sent help info to {from_number} using TwiML")
+        # Send via Textbelt
+        send_sms(from_number, response)
+        logger.info(f"Sent help info to {from_number} using Textbelt")
     
     elif first_word == 'cancel':
         # Handle order cancellation
@@ -1663,19 +1642,16 @@ def sms_webhook():
                 response = f"Your {restaurant} order has been cancelled. If you'd like to place a new order, text 'MENU' to see options."
                 
                 # Notify admin about cancellation
-                if client:
-                    try:
-                        admin_note = f"ORDER CANCELLED!\n\n"
-                        admin_note += f"Customer: {from_number}\n"
-                        admin_note += f"Restaurant: {restaurant}\n"
-                        
-                        client.messages.create(
-                            body=admin_note,
-                            from_=twilio_phone,
-                            to=notification_email
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending admin notification for cancellation: {e}")
+                try:
+                    admin_note = f"ORDER CANCELLED!\n\n"
+                    admin_note += f"Customer: {from_number}\n"
+                    admin_note += f"Restaurant: {restaurant}\n"
+                    
+                    # Send to admin via Textbelt
+                    notification_phone = os.getenv('NOTIFICATION_PHONE')
+                    send_sms(notification_phone, admin_note)
+                except Exception as e:
+                    logger.error(f"Error sending admin notification for cancellation: {e}")
             else:
                 # Too late to cancel
                 response = "Sorry, it's too late to cancel your order. Orders can only be cancelled within 10 minutes of placing them."
@@ -1688,7 +1664,8 @@ def sms_webhook():
         user_history.append({'role': 'assistant', 'content': response})
         active_sessions[clean_phone]['conversation_history'] = user_history
         
-        resp.message(response)
+        # Send via Textbelt
+        send_sms(from_number, response)
         logger.info(f"Processed cancellation request from {from_number}")
     
     else:
@@ -1731,7 +1708,6 @@ def sms_webhook():
             
             try:
                 # Call OpenAI API
-                # Call OpenAI API
                 client = openai.OpenAI(api_key=openai_api_key)
                 ai_response = client.chat.completions.create(
                     model="gpt-3.5-turbo",
@@ -1758,11 +1734,66 @@ def sms_webhook():
         user_history.append({'role': 'assistant', 'content': response})
         active_sessions[clean_phone]['conversation_history'] = user_history
         
-        resp.message(response)
-        logger.info(f"Sent AI-powered response to {from_number} using TwiML")
+        # Send via Textbelt
+        send_sms(from_number, response)
+        logger.info(f"Sent AI-powered response to {from_number} using Textbelt")
     
     conn.close()
-    return str(resp)
+    return jsonify({"success": True})
+
+def send_sms(phone_number, message):
+    """Send SMS using Textbelt API"""
+    textbelt_api_key = os.getenv('TEXTBELT_API_KEY')
+    
+    # Clean the phone number - ensure it's just digits
+    clean_phone = ''.join(filter(str.isdigit, phone_number))
+    
+    # Prepare the webhook URL for receiving replies
+    webhook_url = os.getenv('WEBHOOK_URL', 'https://yourdomain.com/webhook/sms')
+    
+    # Prepare the payload for Textbelt
+    payload = {
+        'phone': clean_phone,
+        'message': message,
+        'key': textbelt_api_key,
+        'replyWebhookUrl': webhook_url  # This is needed to receive replies
+    }
+    
+    # Add sender information if configured
+    sender = os.getenv('SENDER_NAME', 'TreeHouse')
+    if sender:
+        payload['sender'] = sender
+    
+    try:
+        # Send the SMS via Textbelt API
+        response = requests.post('https://textbelt.com/text', data=payload)
+        response_data = response.json()
+        
+        if response_data.get('success'):
+            logger.info(f"SMS sent successfully to {phone_number}. Quota remaining: {response_data.get('quotaRemaining')}")
+            return True, response_data
+        else:
+            logger.error(f"Failed to send SMS to {phone_number}: {response_data.get('error')}")
+            return False, response_data
+    except Exception as e:
+        logger.error(f"Error sending SMS via Textbelt: {e}")
+        return False, {'error': str(e)}
+
+def verify(api_key, timestamp, request_signature, request_payload):
+    """Verify the Textbelt webhook signature"""
+    import hmac
+    import hashlib
+    
+    if not api_key or not timestamp or not request_signature or not request_payload:
+        return False
+    
+    my_signature = hmac.new(
+        api_key.encode('utf-8'), 
+        (timestamp + request_payload).encode('utf-8'), 
+        hashlib.sha256
+    ).hexdigest()
+    
+    return hmac.compare_digest(request_signature, my_signature)
 
 @app.route('/test-sms')
 def test_sms_simple():
@@ -2441,95 +2472,87 @@ def stripe_webhook():
                 conn.close()
                 logger.info(f"Payment recorded for user_id {user_id}, amount ${payment_amount}")
                 
-                # Notify the user about successful payment
-                if client:
-                    try:
-                        # Get batch information if available
-                        batch_time_str = "upcoming batch"
-                        restaurant = "your order"
-                        batch_location = "your location"
+                # Notify the user about successful payment via Textbelt
+                try:
+                    # Get batch information if available
+                    batch_time_str = "upcoming batch"
+                    restaurant = "your order"
+                    batch_location = "your location"
+                    
+                    if phone_number in active_sessions:
+                        phone_session = active_sessions[phone_number]
+                        restaurant = phone_session.get('restaurant', 'your order')
                         
-                        if phone_number in active_sessions:
-                            phone_session = active_sessions[phone_number]
-                            restaurant = phone_session.get('restaurant', 'your order')
+                        if 'batch_info' in phone_session:
+                            batch_info = phone_session['batch_info']
                             
-                            if 'batch_info' in phone_session:
-                                batch_info = phone_session['batch_info']
-                                
-                                if batch_info and 'batch_time' in batch_info:
-                                    batch_time = batch_info['batch_time']
-                                    batch_time_str = datetime.fromisoformat(str(batch_time)).strftime("%I:%M %p") if isinstance(batch_time, str) else batch_time.strftime("%I:%M %p")
-                                
-                                if batch_info and 'location' in batch_info:
-                                    batch_location = batch_info['location']
-                        
-                        # Create confirmation message
-                        confirmation = f"""Payment confirmed! Your {restaurant} order is set for pickup at {batch_location} between {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:]}.
+                            if batch_info and 'batch_time' in batch_info:
+                                batch_time = batch_info['batch_time']
+                                batch_time_str = datetime.fromisoformat(str(batch_time)).strftime("%I:%M %p") if isinstance(batch_time, str) else batch_time.strftime("%I:%M %p")
+                            
+                            if batch_info and 'location' in batch_info:
+                                batch_location = batch_info['location']
+                    
+                    # Create confirmation message
+                    confirmation = f"""Payment confirmed! Your {restaurant} order is set for pickup at {batch_location} between {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:]}.
 
 Your batch is currently 5/10 full.
 
 We'll text you when the batch is locked in.
 
 Reply "CANCEL" within the next 10 minutes if you need to cancel."""
-                        
-                        message = client.messages.create(
-                            body=confirmation,
-                            from_=twilio_phone,
-                            to=f"+{phone_number}"
-                        )
-                        logger.info(f"Payment confirmation sent to +{phone_number}")
-                        
-                        # Also simulate the "batch locked in" message after 30 seconds
-                        import threading
-                        def send_batch_confirmation():
-                            time.sleep(30)  # Wait 30 seconds
-                            try:
-                                batch_confirm = f"""Your {restaurant} batch is locked in!
+                    
+                    # Send payment confirmation via Textbelt
+                    send_sms(f"+{phone_number}", confirmation)
+                    logger.info(f"Payment confirmation sent to +{phone_number}")
+                    
+                    # Also simulate the "batch locked in" message after 30 seconds
+                    import threading
+                    def send_batch_confirmation():
+                        time.sleep(30)  # Wait 30 seconds
+                        try:
+                            batch_confirm = f"""Your {restaurant} batch is locked in!
 
 5 orders total. Delivery to {batch_location} at {batch_time_str}.
 
 Your pickup window: {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:]}"""
-                                
-                                client.messages.create(
-                                    body=batch_confirm,
-                                    from_=twilio_phone,
-                                    to=f"+{phone_number}"
-                                )
-                                logger.info(f"Batch confirmation sent to +{phone_number}")
-                            except Exception as e:
-                                logger.error(f"Error sending batch confirmation: {e}")
-                        
-                        # Start the timer thread
-                        timer_thread = threading.Thread(target=send_batch_confirmation)
-                        timer_thread.daemon = True
-                        timer_thread.start()
-                        
-                    except Exception as e:
-                        logger.error(f"Error sending payment confirmation: {e}")
+                            
+                            # Send batch confirmation via Textbelt
+                            send_sms(f"+{phone_number}", batch_confirm)
+                            logger.info(f"Batch confirmation sent to +{phone_number}")
+                        except Exception as e:
+                            logger.error(f"Error sending batch confirmation: {e}")
+                    
+                    # Start the timer thread
+                    timer_thread = threading.Thread(target=send_batch_confirmation)
+                    timer_thread.daemon = True
+                    timer_thread.start()
+                    
+                except Exception as e:
+                    logger.error(f"Error sending payment confirmation: {e}")
                 
-                # Notify admin about payment
-                if client:
-                    try:
-                        # Get order details if available
-                        order_details = ""
-                        if phone_number in active_sessions:
-                            order_text = active_sessions[phone_number].get('order_text', '')
-                            restaurant = active_sessions[phone_number].get('restaurant', '')
-                            
-                            if order_text:
-                                order_details = f"\nOrder: {order_text}"
-                            
-                            if restaurant:
-                                order_details += f"\nRestaurant: {restaurant}"
+                # Notify admin about payment using Textbelt
+                try:
+                    # Get order details if available
+                    order_details = ""
+                    if phone_number in active_sessions:
+                        order_text = active_sessions[phone_number].get('order_text', '')
+                        restaurant = active_sessions[phone_number].get('restaurant', '')
                         
-                        client.messages.create(
-                            body=f"Payment received! Phone: +{phone_number}, Amount: ${payment_amount:.2f}, Stripe ID: {payment_id}{order_details}",
-                            from_=twilio_phone,
-                            to=notification_email
-                        )
-                        logger.info(f"Admin payment notification sent")
-                    except Exception as e:
-                        logger.error(f"Error sending admin payment notification: {e}")
+                        if order_text:
+                            order_details = f"\nOrder: {order_text}"
+                        
+                        if restaurant:
+                            order_details += f"\nRestaurant: {restaurant}"
+                    
+                    notification_phone = os.getenv('NOTIFICATION_PHONE')
+                    admin_notification = f"Payment received! Phone: +{phone_number}, Amount: ${payment_amount:.2f}, Stripe ID: {payment_id}{order_details}"
+                    
+                    # Send admin notification via Textbelt
+                    send_sms(notification_phone, admin_notification)
+                    logger.info(f"Admin payment notification sent")
+                except Exception as e:
+                    logger.error(f"Error sending admin payment notification: {e}")
                 
             except Exception as e:
                 logger.error(f"Error recording payment: {e}")
