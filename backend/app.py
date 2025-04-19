@@ -154,8 +154,33 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Add this function to update the database schema for consent tracking
+def update_database_schema():
+    """Add SMS consent tracking fields to the database"""
+    conn = sqlite3.connect('treehouse.db')
+    c = conn.cursor()
+    
+    # Check if users table has the consent columns
+    c.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in c.fetchall()]
+    
+    # Add sms_consent column if it doesn't exist
+    if 'sms_consent' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN sms_consent BOOLEAN DEFAULT 0")
+        logger.info("Added sms_consent column to users table")
+    
+    # Add opt_in_timestamp column if it doesn't exist
+    if 'opt_in_timestamp' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN opt_in_timestamp TIMESTAMP")
+        logger.info("Added opt_in_timestamp column to users table")
+    
+    conn.commit()
+    conn.close()
+    logger.info("Database schema updated for consent tracking")
+
 # Initialize the database when the app starts
 init_db()
+update_database_schema()
 
 # Twilio setup
 account_sid = os.getenv('TWILIO_ACCOUNT_SID')
@@ -163,15 +188,17 @@ auth_token = os.getenv('TWILIO_AUTH_TOKEN')
 twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
 notification_email = os.getenv('NOTIFICATION_EMAIL')
 
-client = None
+# Twilio setup
+twilio_client = None  # Rename this
 if account_sid and auth_token:
     try:
-        client = Client(account_sid, auth_token)
+        twilio_client = Client(account_sid, auth_token)  # Use twilio_client
         logger.info("Twilio client initialized successfully")
     except Exception as e:
         logger.error(f"Error initializing Twilio client: {e}")
 else:
     logger.warning("Twilio credentials not found or incomplete")
+
 
 # Stripe setup
 stripe_secret_key = os.getenv('STRIPE_SECRET_KEY')
@@ -186,7 +213,7 @@ stripe.api_version = "2025-03-31.basil"
 # OpenAI setup
 openai_api_key = os.getenv('OPENAI_API_KEY')
 if openai_api_key:
-    client = openai.OpenAI(api_key=openai_api_key)
+    openai_client = openai.OpenAI(api_key=openai_api_key)  # Use openai_client
     logger.info("OpenAI client initialized successfully")
 else:
     logger.warning("OpenAI API key not found")
@@ -277,6 +304,10 @@ def signup():
     dorm_building = data.get('dorm_building')
     room_number = data.get('room_number')
     
+    # New consent fields
+    sms_consent = data.get('sms_consent', False)
+    opt_in_timestamp = data.get('opt_in_timestamp', datetime.now().isoformat())
+    
     if not phone_number:
         return jsonify({"error": "Phone number is required"}), 400
     
@@ -294,40 +325,44 @@ def signup():
         
         if user:
             # Update existing user if more info provided
-            if any([name, email, dorm_building, room_number]):
-                query = "UPDATE users SET "
-                params = []
-                
-                if name:
-                    query += "name = ?, "
-                    params.append(name)
-                if email:
-                    query += "email = ?, "
-                    params.append(email)
-                if dorm_building:
-                    query += "dorm_building = ?, "
-                    params.append(dorm_building)
-                if room_number:
-                    query += "room_number = ?, "
-                    params.append(room_number)
-                
-                # Remove the trailing comma and space
-                query = query.rstrip(", ")
-                query += " WHERE phone_number = ?"
-                params.append(clean_phone)
-                
+            user_id = user[0]
+            query_parts = []
+            params = []
+            
+            if name:
+                query_parts.append("name = ?")
+                params.append(name)
+            if email:
+                query_parts.append("email = ?")
+                params.append(email)
+            if dorm_building:
+                query_parts.append("dorm_building = ?")
+                params.append(dorm_building)
+            if room_number:
+                query_parts.append("room_number = ?")
+                params.append(room_number)
+            
+            # Always update consent information
+            query_parts.append("sms_consent = ?")
+            params.append(sms_consent)
+            
+            query_parts.append("opt_in_timestamp = ?")
+            params.append(opt_in_timestamp)
+            
+            # Create the update query
+            if query_parts:
+                query = "UPDATE users SET " + ", ".join(query_parts) + " WHERE id = ?"
+                params.append(user_id)
                 c.execute(query, params)
-                conn.commit()
-                is_new_user = False
-                user_id = user[0]
-            else:
-                is_new_user = False
-                user_id = user[0]
+            
+            is_new_user = False
         else:
             # Insert new user
             c.execute(
-                "INSERT INTO users (phone_number, name, email, dorm_building, room_number) VALUES (?, ?, ?, ?, ?)",
-                (clean_phone, name, email, dorm_building, room_number)
+                """INSERT INTO users 
+                   (phone_number, name, email, dorm_building, room_number, sms_consent, opt_in_timestamp) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (clean_phone, name, email, dorm_building, room_number, sms_consent, opt_in_timestamp)
             )
             user_id = c.lastrowid
             is_new_user = True
@@ -335,15 +370,38 @@ def signup():
         conn.commit()
         conn.close()
         
-        # Send notification via Twilio if it's a new user
-        if is_new_user and client:
+        # Send notification via Twilio if it's a new user and they consented
+        if is_new_user and sms_consent and twilio_client:
             try:
-                message = client.messages.create(
-                    body=f"New TreeHouse signup! Phone: {phone_number}, Dorm/Building: {dorm_building or 'Not specified'}",
-                    from_=twilio_phone,
-                    to=notification_email
+                # Send welcome message to the new user
+                welcome_message = (
+                    f"Welcome to TreeHouse! You're all set to receive our notifications. "
+                    f"Text MENU to see restaurant options, ORDER to place an order, or HELP for assistance. "
+                    f"Reply STOP at any time to unsubscribe. Msg & data rates may apply."
                 )
-                logger.info(f"Notification sent: {message.sid}")
+                
+                message = twilio_client.messages.create(
+                    body=welcome_message,
+                    from_=twilio_phone,  # Send from your Twilio number
+                    to=f"+{clean_phone}"  # Send to the new user's phone number
+                )
+                logger.info(f"Welcome message sent: {message.sid}")
+
+                # Notify admin via SMS (admin's phone number)
+                admin_message = (
+                    f"New TreeHouse signup! Phone: {phone_number}, "
+                    f"Dorm/Building: {dorm_building or 'Not specified'}, "
+                    f"SMS consent: {'Yes' if sms_consent else 'No'}"
+                )
+                
+                # Send the admin notification SMS (admin's phone number is stored in notification_email)
+                twilio_client.messages.create(
+                    body=admin_message,
+                    from_=twilio_phone,  # Use your Twilio number to send the message
+                    to=f"+{notification_email}"  # Admin's phone number (in E.164 format)
+                )
+                logger.info(f"Admin notification sent for new signup")
+                
             except Exception as e:
                 logger.error(f"Error sending notification: {e}")
         
@@ -481,14 +539,14 @@ def create_order():
         conn.commit()
         
         # Send notification via Twilio
-        if client:
+        if twilio_client:
             try:
                 # Get user info for notification
                 c.execute("SELECT phone_number FROM users WHERE id = ?", (user_id,))
                 user_result = c.fetchone()
                 user_phone = user_result[0] if user_result else "Unknown"
                 
-                message = client.messages.create(
+                message = twilio_client.messages.create(
                     body=f"New TreeHouse order! Order ID: {order_id}, Amount: ${total_amount:.2f}, User: {user_phone}",
                     from_=twilio_phone,
                     to=notification_email
@@ -499,7 +557,7 @@ def create_order():
         
         # Inside your create_order function, add this before conn.close()
         # Send detailed notification to admin
-        if client:
+        if twilio_client:
             try:
                 # Get user details
                 c.execute("SELECT phone_number, name, dorm_building, room_number FROM users WHERE id = ?", (user_id,))
@@ -564,7 +622,7 @@ def create_order():
                     admin_note += f"\nScheduled for: {time_str}"
                 
                 # Send to your notification number
-                client.messages.create(
+                twilio_client.messages.create(
                     body=admin_note,
                     from_=twilio_phone,
                     to=notification_email  # Make sure this is your phone number
@@ -717,7 +775,7 @@ def process_payment():
         conn.commit()
         
         # Send notification via Twilio
-        if client:
+        if twilio_client:
             try:
                 # Get user info for notification
                 user_id = order[2]
@@ -725,7 +783,7 @@ def process_payment():
                 user_result = c.fetchone()
                 user_phone = user_result[0] if user_result else "Unknown"
                 
-                message = client.messages.create(
+                message = twilio_client.messages.create(
                     body=f"Payment received! Order ID: {order_id}, Amount: ${payment_amount:.2f}, User: {user_phone}",
                     from_=twilio_phone,
                     to=notification_email
@@ -1312,6 +1370,85 @@ def sms_webhook():
     # Clean the phone number
     clean_phone = ''.join(filter(str.isdigit, from_number))
     
+    # Create a TwiML response
+    resp = MessagingResponse()
+    
+    # Handle STOP, UNSUBSCRIBE commands (opt-out)
+    if incoming_message.upper() in ['STOP', 'CANCEL', 'UNSUBSCRIBE', 'END', 'QUIT']:
+        try:
+            conn = sqlite3.connect('treehouse.db')
+            c = conn.cursor()
+            
+            # Update user's consent status
+            c.execute("UPDATE users SET sms_consent = 0 WHERE phone_number = ?", (clean_phone,))
+            conn.commit()
+            
+            # Find user ID for logging purposes
+            c.execute("SELECT id FROM users WHERE phone_number = ?", (clean_phone,))
+            user = c.fetchone()
+            conn.close()
+            
+            # Send confirmation message
+            resp.message("You have been unsubscribed from TreeHouse messages. Text JOIN to resubscribe at any time.")
+            logger.info(f"User {from_number} opted out of messages")
+            
+            # Remove from active sessions if present
+            if clean_phone in active_sessions:
+                del active_sessions[clean_phone]
+            
+            return str(resp)
+        except Exception as e:
+            logger.error(f"Error processing opt-out: {e}")
+    
+    # Handle HELP command
+    elif incoming_message.upper() == 'HELP':
+        help_text = (
+            "TreeHouse - Restaurant delivery for ONLY $4!\n\n"
+            "Commands:\n"
+            "• MENU - See available restaurants\n"
+            "• ORDER [details] - Place an order\n"
+            "• PAY - Get a payment link\n"
+            "• STOP - Unsubscribe from messages\n\n"
+            "For assistance, call (708) 901-1754\n"
+            "Msg & data rates may apply."
+        )
+        resp.message(help_text)
+        return str(resp)
+    
+    # Handle JOIN or START for resubscribing
+    elif incoming_message.upper() in ['JOIN', 'START']:
+        try:
+            conn = sqlite3.connect('treehouse.db')
+            c = conn.cursor()
+            
+            # Check if user exists
+            c.execute("SELECT id FROM users WHERE phone_number = ?", (clean_phone,))
+            user = c.fetchone()
+            
+            if user:
+                # Update consent status
+                c.execute("UPDATE users SET sms_consent = 1, opt_in_timestamp = ? WHERE phone_number = ?", 
+                         (datetime.now().isoformat(), clean_phone))
+                conn.commit()
+                conn.close()
+                
+                # Send confirmation message
+                resp.message("Welcome back to TreeHouse! You're now subscribed to receive messages. Text MENU to see restaurant options.")
+                logger.info(f"User {from_number} opted back in to messages")
+                return str(resp)
+            else:
+                # New user - create an account
+                c.execute("INSERT INTO users (phone_number, sms_consent, opt_in_timestamp) VALUES (?, ?, ?)",
+                         (clean_phone, True, datetime.now().isoformat()))
+                conn.commit()
+                conn.close()
+                
+                resp.message("Welcome to TreeHouse! You're now subscribed to receive messages. Text MENU to see restaurant options.")
+                logger.info(f"New user {from_number} joined via text")
+                return str(resp)
+        except Exception as e:
+            logger.error(f"Error processing opt-in: {e}")
+    
     # Find user by phone number
     conn = sqlite3.connect('treehouse.db')
     c = conn.cursor()
@@ -1329,9 +1466,6 @@ def sms_webhook():
         welcome_msg = ""
     
     user_id = user[0]
-    
-    # Create a TwiML response
-    resp = MessagingResponse()
     
     # Get user history for AI context
     user_history = []
@@ -1394,7 +1528,7 @@ def sms_webhook():
                     active_sessions[clean_phone]['batch_info'] = batch_info
             
             # Send notification to admin
-            if client and restaurant_name:
+            if twilio_client and restaurant_name:
                 try:
                     # Get user details if available
                     c.execute("SELECT name, dorm_building, room_number FROM users WHERE id = ?", (user_id,))
@@ -1411,7 +1545,7 @@ def sms_webhook():
                     admin_note += f"Order: {order_text}\n\n"
                     admin_note += "Customer will need to text 'PAY' to receive payment link."
                     
-                    client.messages.create(
+                    twilio_client.messages.create(
                         body=admin_note,
                         from_=twilio_phone,
                         to=notification_email
@@ -1526,7 +1660,7 @@ def sms_webhook():
                 logger.info(f"Sent Stripe payment link to {from_number} using TwiML")
                 
                 # Send notification to admin
-                if client:
+                if twilio_client:
                     try:
                         admin_note = f"PAYMENT REQUESTED!\n\n"
                         admin_note += f"Customer: {from_number}\n"
@@ -1538,7 +1672,7 @@ def sms_webhook():
                             admin_note += "Note: Customer likely called in their order\n"
                         admin_note += f"Stripe Session ID: {payment_session_id}"
                         
-                        client.messages.create(
+                        twilio_client.messages.create(
                             body=admin_note,
                             from_=twilio_phone,
                             to=notification_email
@@ -1591,7 +1725,7 @@ def sms_webhook():
             logger.info(f"Sent placeholder payment link to {from_number} using TwiML (Stripe not configured)")
             
             # Send notification to admin
-            if client:
+            if twilio_client:
                 try:
                     admin_note = f"PAYMENT REQUESTED!\n\n"
                     admin_note += f"Customer: {from_number}\n"
@@ -1602,7 +1736,7 @@ def sms_webhook():
                     else:
                         admin_note += "Note: Customer likely called in their order\n"
                     
-                    client.messages.create(
+                    twilio_client.messages.create(
                         body=admin_note,
                         from_=twilio_phone,
                         to=notification_email
@@ -1663,13 +1797,13 @@ def sms_webhook():
                 response = f"Your {restaurant} order has been cancelled. If you'd like to place a new order, text 'MENU' to see options."
                 
                 # Notify admin about cancellation
-                if client:
+                if twilio_client:
                     try:
                         admin_note = f"ORDER CANCELLED!\n\n"
                         admin_note += f"Customer: {from_number}\n"
                         admin_note += f"Restaurant: {restaurant}\n"
                         
-                        client.messages.create(
+                        twilio_client.messages.create(
                             body=admin_note,
                             from_=twilio_phone,
                             to=notification_email
@@ -2442,7 +2576,7 @@ def stripe_webhook():
                 logger.info(f"Payment recorded for user_id {user_id}, amount ${payment_amount}")
                 
                 # Notify the user about successful payment
-                if client:
+                if twilio_client:
                     try:
                         # Get batch information if available
                         batch_time_str = "upcoming batch"
@@ -2472,7 +2606,7 @@ We'll text you when the batch is locked in.
 
 Reply "CANCEL" within the next 10 minutes if you need to cancel."""
                         
-                        message = client.messages.create(
+                        message = twilio_client.messages.create(
                             body=confirmation,
                             from_=twilio_phone,
                             to=f"+{phone_number}"
@@ -2490,7 +2624,7 @@ Reply "CANCEL" within the next 10 minutes if you need to cancel."""
 
 Your pickup window: {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:]}"""
                                 
-                                client.messages.create(
+                                twilio_client.messages.create(
                                     body=batch_confirm,
                                     from_=twilio_phone,
                                     to=f"+{phone_number}"
@@ -2508,7 +2642,7 @@ Your pickup window: {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:
                         logger.error(f"Error sending payment confirmation: {e}")
                 
                 # Notify admin about payment
-                if client:
+                if twilio_client:
                     try:
                         # Get order details if available
                         order_details = ""
@@ -2522,7 +2656,7 @@ Your pickup window: {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:
                             if restaurant:
                                 order_details += f"\nRestaurant: {restaurant}"
                         
-                        client.messages.create(
+                        twilio_client.messages.create(
                             body=f"Payment received! Phone: +{phone_number}, Amount: ${payment_amount:.2f}, Stripe ID: {payment_id}{order_details}",
                             from_=twilio_phone,
                             to=notification_email
@@ -2536,6 +2670,12 @@ Your pickup window: {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:
     
     return jsonify({"status": "success"}), 200
 
+
+@app.route('/privacy-policy.html', defaults={'path': ''})
+@app.route('/privacy-policy.html/<path:path>')
+def serve_privacy_policy(path):
+    # Serve the privacy policy from the static/react directory instead
+    return send_from_directory('static/react', 'privacy-policy.html')
 
 @app.route('/')
 def serve_react_app():
