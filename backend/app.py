@@ -1576,184 +1576,83 @@ def sms_webhook():
             if batch_info and 'delivery_fee' in batch_info:
                 delivery_fee = float(batch_info['delivery_fee'])
         
-        if stripe_secret_key:
-            # Use Stripe for payment processing with customer-chosen amount
-            try:
-                # Create a product for the food order
-                food_product = stripe.Product.create(
-                    name="TreeHouse Food Order",
-                    description=f"Your food order + ${delivery_fee:.2f} delivery fee"
-                )
-                
-                # Create a price with custom_unit_amount enabled
-                food_price = stripe.Price.create(
-                    product=food_product.id,
-                    currency="usd",
-                    custom_unit_amount={"enabled": True}
-                )
-                
-                # Create a checkout session with the custom amount price
-                checkout_session = stripe.checkout.Session.create(
-                    payment_method_types=['card'],
-                    line_items=[
-                        {
-                            'price': food_price.id,
-                            'quantity': 1
-                        }
-                    ],
-                    mode='payment',
-                    success_url='https://treehouseneighbor.com/payment-success?session_id={CHECKOUT_SESSION_ID}',
-                    cancel_url='https://treehouseneighbor.com/payment-cancel',
-                    metadata={
-                        'phone_number': clean_phone,
-                        'has_active_order': str(has_active_order),
-                        'user_id': str(user_id),
-                        'includes_delivery_fee': 'true'
-                    },
-                    custom_text={
-                        'submit': {'message': 'Pay for order'}
-                    }
-                )
-                
-                # Store the session ID in the active session
-                payment_session_id = checkout_session.id
-                if not has_active_order:
-                    import datetime as dt
-                    active_sessions[clean_phone] = {
-                        'user_id': user_id,
-                        'payment_session_id': payment_session_id,
-                        'started_at': dt.datetime.now()
-                    }
-                else:
-                    active_sessions[clean_phone]['payment_session_id'] = payment_session_id
-                
-                # Create the payment link
-                payment_link = checkout_session.url
-                
-                # Send payment instructions
-                response = "Here's your payment link:\n" + payment_link + "\n\n"
-                response += f"Please enter the TOTAL amount including BOTH your food cost AND the ${delivery_fee:.2f} delivery fee.\n"
-                response += f"For example, if your food costs $15, enter ${15 + delivery_fee:.2f} total."
-                
-                if has_active_order:
-                    order_text = active_sessions[clean_phone].get('order_text', '')
-                    restaurant = active_sessions[clean_phone].get('restaurant', '')
-                    
-                    # Safely format batch time if it exists
-                    batch_time_str = None
-                    
-                    if 'batch_info' in active_sessions[clean_phone]:
-                        batch_info = active_sessions[clean_phone]['batch_info']
-                        if batch_info and 'batch_time' in batch_info:
-                            batch_time = batch_info['batch_time']
-                            # Safely convert batch_time to string format
-                            if isinstance(batch_time, datetime):
-                                batch_time_str = batch_time.strftime("%I:%M %p")
-                            elif isinstance(batch_time, str):
-                                try:
-                                    dt_obj = datetime.fromisoformat(batch_time.replace('Z', '+00:00'))
-                                    batch_time_str = dt_obj.strftime("%I:%M %p")
-                                except:
-                                    # If parsing fails, just use the string itself
-                                    batch_time_str = batch_time
-                    
-                    response += f"\n\nFor reference, your order was: {order_text}"
-                    
-                    if restaurant and batch_time_str:
-                        response += f"\nRestaurant: {restaurant}, Pickup at {batch_time_str}"
-                
-                # Update conversation history
-                user_history.append({'role': 'user', 'content': incoming_message})
-                user_history.append({'role': 'assistant', 'content': response})
-                active_sessions[clean_phone]['conversation_history'] = user_history
-                
-                resp.message(response)
-                logger.info(f"Sent Stripe payment link to {from_number} using TwiML")
-                
-                # Send notification to admin
-                if twilio_client:
-                    try:
-                        admin_note = f"PAYMENT REQUESTED!\n\n"
-                        admin_note += f"Customer: {from_number}\n"
-                        if has_active_order:
-                            restaurant = active_sessions[clean_phone].get('restaurant', 'Unknown')
-                            admin_note += f"Restaurant: {restaurant}\n"
-                            admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
-                        else:
-                            admin_note += "Note: Customer likely called in their order\n"
-                        admin_note += f"Stripe Session ID: {payment_session_id}"
-                        
-                        twilio_client.messages.create(
-                            body=admin_note,
-                            from_=twilio_phone,
-                            to=notification_email
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending admin notification: {e}")
-                        
-            except Exception as e:
-                logger.error(f"Error creating Stripe session: {e}")
-                response = "Sorry, there was an error generating your payment link. Please try again or call (708) 901-1754 for assistance."
-                
-                # Update conversation history
-                user_history.append({'role': 'user', 'content': incoming_message})
-                user_history.append({'role': 'assistant', 'content': response})
-                active_sessions[clean_phone]['conversation_history'] = user_history
-                
-                resp.message(response)
+        # Use the fixed payment link from your Stripe dashboard
+        payment_link = "https://buy.stripe.com/4gweYm6zB6FbfbWdQQ"
+        
+        # Generate a unique session ID for tracking
+        import datetime as dt
+        payment_session_id = f"pay_{clean_phone}_{int(dt.datetime.now().timestamp())}"
+        
+        # Store the session ID in the active session
+        if not has_active_order:
+            active_sessions[clean_phone] = {
+                'user_id': user_id,
+                'payment_session_id': payment_session_id,
+                'started_at': dt.datetime.now()
+            }
         else:
-            # Fallback to the placeholder payment link if Stripe is not configured
-            import datetime as dt
-            payment_session_id = f"pay_{clean_phone}_{int(dt.datetime.now().timestamp())}"
+            active_sessions[clean_phone]['payment_session_id'] = payment_session_id
+        
+        # Send payment instructions
+        response = "Here's your payment link:\n" + payment_link + "\n\n"
+        response += f"Please enter the TOTAL amount including BOTH your food cost AND the ${delivery_fee:.2f} delivery fee.\n"
+        response += f"For example, if your food costs $15, enter ${15 + delivery_fee:.2f} total."
+        
+        if has_active_order:
+            order_text = active_sessions[clean_phone].get('order_text', '')
+            restaurant = active_sessions[clean_phone].get('restaurant', '')
             
-            # Prepare a fake payment link as fallback
-            payment_link = f"https://treehouseneighbor.com/pay/{payment_session_id}"
+            # Safely format batch time if it exists
+            batch_time_str = None
             
-            # Save the payment session
-            if not has_active_order:
-                active_sessions[clean_phone] = {
-                    'user_id': user_id,
-                    'payment_session_id': payment_session_id,
-                    'started_at': dt.datetime.now()
-                }
-            else:
-                active_sessions[clean_phone]['payment_session_id'] = payment_session_id
+            if 'batch_info' in active_sessions[clean_phone]:
+                batch_info = active_sessions[clean_phone]['batch_info']
+                if batch_info and 'batch_time' in batch_info:
+                    batch_time = batch_info['batch_time']
+                    # Safely convert batch_time to string format
+                    if isinstance(batch_time, datetime):
+                        batch_time_str = batch_time.strftime("%I:%M %p")
+                    elif isinstance(batch_time, str):
+                        try:
+                            dt_obj = datetime.fromisoformat(batch_time.replace('Z', '+00:00'))
+                            batch_time_str = dt_obj.strftime("%I:%M %p")
+                        except:
+                            # If parsing fails, just use the string itself
+                            batch_time_str = batch_time
             
-            # Send payment instructions
-            response = "Here's your payment link:\n" + payment_link + "\n\n"
-            response += f"Please enter the total amount including both your food cost AND the ${delivery_fee:.2f} delivery fee."
+            response += f"\n\nFor reference, your order was: {order_text}"
             
-            if has_active_order:
-                order_text = active_sessions[clean_phone].get('order_text', '')
-                response += f"\n\nFor reference, your order was: {order_text}"
-            
-            # Update conversation history
-            user_history.append({'role': 'user', 'content': incoming_message})
-            user_history.append({'role': 'assistant', 'content': response})
-            active_sessions[clean_phone]['conversation_history'] = user_history
-            
-            resp.message(response)
-            logger.info(f"Sent placeholder payment link to {from_number} using TwiML (Stripe not configured)")
-            
-            # Send notification to admin
-            if twilio_client:
-                try:
-                    admin_note = f"PAYMENT REQUESTED!\n\n"
-                    admin_note += f"Customer: {from_number}\n"
-                    if has_active_order:
-                        restaurant = active_sessions[clean_phone].get('restaurant', 'Unknown')
-                        admin_note += f"Restaurant: {restaurant}\n"
-                        admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
-                    else:
-                        admin_note += "Note: Customer likely called in their order\n"
-                    
-                    twilio_client.messages.create(
-                        body=admin_note,
-                        from_=twilio_phone,
-                        to=notification_email
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending admin notification: {e}")
+            if restaurant and batch_time_str:
+                response += f"\nRestaurant: {restaurant}, Pickup at {batch_time_str}"
+        
+        # Update conversation history
+        user_history.append({'role': 'user', 'content': incoming_message})
+        user_history.append({'role': 'assistant', 'content': response})
+        active_sessions[clean_phone]['conversation_history'] = user_history
+        
+        resp.message(response)
+        logger.info(f"Sent payment link to {from_number} using TwiML")
+        
+        # Send notification to admin
+        if twilio_client:
+            try:
+                admin_note = f"PAYMENT REQUESTED!\n\n"
+                admin_note += f"Customer: {from_number}\n"
+                if has_active_order:
+                    restaurant = active_sessions[clean_phone].get('restaurant', 'Unknown')
+                    admin_note += f"Restaurant: {restaurant}\n"
+                    admin_note += f"Order: {active_sessions[clean_phone].get('order_text', 'No order text')}\n"
+                else:
+                    admin_note += "Note: Customer likely called in their order\n"
+                admin_note += f"Session ID: {payment_session_id}"
+                
+                twilio_client.messages.create(
+                    body=admin_note,
+                    from_=twilio_phone,
+                    to=notification_email
+                )
+            except Exception as e:
+                logger.error(f"Error sending admin notification: {e}")
     
     elif first_word in ['help', 'info']:
         # Provide help information
