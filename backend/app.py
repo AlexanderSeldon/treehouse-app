@@ -2671,11 +2671,37 @@ Your pickup window: {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:
     return jsonify({"status": "success"}), 200
 
 
-@app.route('/privacy-policy.html', defaults={'path': ''})
-@app.route('/privacy-policy.html/<path:path>')
-def serve_privacy_policy(path):
-    # Serve the privacy policy from the static/react directory instead
-    return send_from_directory('static/react', 'privacy-policy.html')
+@app.route('/privacy-policy.html')
+def serve_privacy_policy_simple():
+    try:
+        # Try looking in multiple possible locations
+        locations = [
+            'static/react/privacy-policy.html',         # Standard location
+            'backend/static/react/privacy-policy.html', # Full path from root
+            'static/react/static/privacy-policy.html',  # Nested static folder
+            'privacy-policy.html'                       # Root directory
+        ]
+        
+        for location in locations:
+            if os.path.exists(location):
+                # Return the first one that exists
+                directory, filename = os.path.split(location)
+                return send_from_directory(directory or '.', filename)
+        
+        # If none found, return a helpful error with more debugging info
+        all_static_files = []
+        for root, dirs, files in os.walk('static'):
+            for file in files:
+                all_static_files.append(os.path.join(root, file))
+                
+        return jsonify({
+            "error": "Privacy policy not found",
+            "working_directory": os.getcwd(),
+            "checked_locations": locations,
+            "all_static_files": all_static_files[:20]  # Limit to first 20 files
+        }), 404
+    except Exception as e:
+        return f"Error: {str(e)}", 500
 
 @app.route('/')
 def serve_react_app():
