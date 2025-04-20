@@ -1638,17 +1638,28 @@ def sms_webhook():
                 if has_active_order:
                     order_text = active_sessions[clean_phone].get('order_text', '')
                     restaurant = active_sessions[clean_phone].get('restaurant', '')
-                    batch_time = None
+                    
+                    # Safely format batch time if it exists
+                    batch_time_str = None
                     
                     if 'batch_info' in active_sessions[clean_phone]:
                         batch_info = active_sessions[clean_phone]['batch_info']
                         if batch_info and 'batch_time' in batch_info:
                             batch_time = batch_info['batch_time']
+                            # Safely convert batch_time to string format
+                            if isinstance(batch_time, datetime):
+                                batch_time_str = batch_time.strftime("%I:%M %p")
+                            elif isinstance(batch_time, str):
+                                try:
+                                    dt_obj = datetime.fromisoformat(batch_time.replace('Z', '+00:00'))
+                                    batch_time_str = dt_obj.strftime("%I:%M %p")
+                                except:
+                                    # If parsing fails, just use the string itself
+                                    batch_time_str = batch_time
                     
                     response += f"\n\nFor reference, your order was: {order_text}"
                     
-                    if restaurant and batch_time:
-                        batch_time_str = batch_time.strftime("%I:%M %p")
+                    if restaurant and batch_time_str:
                         response += f"\nRestaurant: {restaurant}, Pickup at {batch_time_str}"
                 
                 # Update conversation history
