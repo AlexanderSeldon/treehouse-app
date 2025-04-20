@@ -5,9 +5,6 @@ import Logo from './Logo';
 import frontpageImage from './assets/frontpage.jpg';
 import HotSpotSection from './HotSpotSection';
 
-// Define API URL from environment variable or fallback to localhost
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001';
-
 function App() {
   // State for user phone number input
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -37,7 +34,11 @@ function App() {
       // Record timestamp for opt-in
       const optInTimestamp = new Date().toISOString();
       
-      const response = await fetch(`${API_URL}/api/signup`, {
+      // For development, this will still go to localhost:5001
+      // For production, this will go to the same domain as the app
+      const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:5001' : '';
+      
+      const response = await fetch(`${apiUrl}/api/signup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -84,6 +85,9 @@ function App() {
     }
   };
   
+  // For privacy policy links, use the same approach for the URL
+  const privacyPolicyUrl = window.location.hostname === 'localhost' ? 'http://localhost:5001/privacy-policy.html' : '/privacy-policy.html';
+  
   return (
     <div className="App">
       <header style={{padding: '15px 0', borderBottom: '1px solid #eee', position: 'fixed', width: '100%', backgroundColor: 'white', zIndex: 100}}>
@@ -92,7 +96,7 @@ function App() {
             <Logo />
           </div>
           <div style={{display: 'flex', alignItems: 'center'}}>
-            <a href={`${API_URL}/privacy-policy.html`} target="_blank" rel="noopener noreferrer" style={{marginRight: '15px', color: '#1B4332'}}>Privacy Policy</a>
+            <a href={privacyPolicyUrl} target="_blank" rel="noopener noreferrer" style={{marginRight: '15px', color: '#1B4332'}}>Privacy Policy</a>
             <button 
               style={{
                 background: '#1B4332', 
@@ -155,7 +159,7 @@ function App() {
                 style={{padding: '12px', borderRadius: '4px', border: '1px solid #ddd'}}
               />
               <div style={{fontSize: '13px', marginBottom: '10px'}}>
-                <a href={`${API_URL}/privacy-policy.html`} target="_blank" rel="noopener noreferrer" style={{color: '#1B4332'}}>Privacy Policy</a>
+                <a href={privacyPolicyUrl} target="_blank" rel="noopener noreferrer" style={{color: '#1B4332'}}>Privacy Policy</a>
               </div>
               <button 
                 style={{background: '#1B4332', color: 'white', padding: '12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
@@ -259,7 +263,7 @@ function App() {
             
             <div>
               <h3 style={{fontSize: '20px', marginBottom: '15px'}}>Legal</h3>
-              <p><a href={`${API_URL}/privacy-policy.html`} target="_blank" rel="noopener noreferrer" style={{color: 'white', textDecoration: 'none'}}>Privacy Policy</a></p>
+              <p><a href={privacyPolicyUrl} target="_blank" rel="noopener noreferrer" style={{color: 'white', textDecoration: 'none'}}>Privacy Policy</a></p>
             </div>
           </div>
           
