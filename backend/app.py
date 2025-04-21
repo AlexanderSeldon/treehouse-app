@@ -1447,6 +1447,12 @@ def ai_process_order(order_text, phone_number):
 def is_menu_request(message):
     message_lower = message.lower()
     
+    # Skip specific command words
+    command_words = ['pay', 'order', 'cancel', 'help', 'info', 'join', 'start', 'stop', 'quit']
+    first_word = message_lower.split(' ')[0]
+    if first_word in command_words:
+        return False
+    
     # Direct menu requests that should show the formatted menu
     direct_menu_keywords = [
         'menu', 'restaurants', 'options', 'deals now', 'current deals',
