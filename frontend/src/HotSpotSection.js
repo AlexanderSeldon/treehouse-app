@@ -161,65 +161,62 @@ const HotSpotSection = () => {
         return;
       }
       
-      // Within operating hours, calculate time to next ordering window (:25 or :55)
-      let nextMinute;
-      let cutoffMinute;
+      // Within operating hours, calculate time to when current batch ends
+      let nextBatchEndTime = new Date(now);
+      let nextBatchStartTime = new Date(now);
       
-      // Define ordering windows at :25-:30, :55-:00, etc.
+      // Define ordering windows at :25-:30, :55-:00
       if (minutes < 25) {
-        nextMinute = 25;
-        cutoffMinute = 30;
+        // Current batch ends at XX:30
+        nextBatchEndTime.setMinutes(30, 0, 0);
+        // Next batch starts at XX:25
+        nextBatchStartTime.setMinutes(25, 0, 0);
+      } else if (minutes < 30) {
+        // We're in the XX:25-XX:30 window
+        // Current batch ends at XX:30
+        nextBatchEndTime.setMinutes(30, 0, 0);
+        // Next batch starts at XX:55
+        nextBatchStartTime.setMinutes(55, 0, 0);
       } else if (minutes < 55) {
-        nextMinute = 55;
-        cutoffMinute = 0; // This becomes 0 for the next hour
+        // Current batch ends at (XX+1):00
+        nextBatchEndTime.setHours(nextBatchEndTime.getHours() + 1, 0, 0, 0);
+        // Next batch starts at XX:55
+        nextBatchStartTime.setMinutes(55, 0, 0);
       } else {
-        nextMinute = 25; // Next hour's window
-        cutoffMinute = 30;
+        // We're in the XX:55-XX:00 window
+        // Current batch ends at (XX+1):00
+        nextBatchEndTime.setHours(nextBatchEndTime.getHours() + 1, 0, 0, 0);
+        // Next batch starts at (XX+1):25
+        nextBatchStartTime.setHours(nextBatchStartTime.getHours() + 1, 25, 0, 0);
       }
       
-      const nextTime = new Date(now);
-      nextTime.setMinutes(nextMinute, 0, 0);
-      
-      // Calculate cutoff time
-      const cutoffTime = new Date(nextTime);
-      if (nextMinute === 55) {
-        // If next minute is 55, cutoff is at 00 of next hour
-        cutoffTime.setHours(cutoffTime.getHours() + 1);
-        cutoffTime.setMinutes(0, 0, 0);
-      } else {
-        // Otherwise, cutoff is at 30 of this hour
-        cutoffTime.setMinutes(30, 0, 0);
-      }
-      
-      if (minutes >= 55) {
-        nextTime.setHours(nextTime.getHours() + 1);
+      // Check if next batch would be after closing time
+      if (nextBatchEndTime.getHours() >= 22) {
+        // Next batch would be after closing, so point to opening time tomorrow
+        nextBatchEndTime.setDate(nextBatchEndTime.getDate() + 1);
+        nextBatchEndTime.setHours(11, 0, 0, 0);
         
-        // Check if next window would be after closing time
-        if (nextTime.getHours() >= 22) {
-          // Next batch would be after closing, so point to opening time tomorrow
-          nextTime.setDate(nextTime.getDate() + 1);
-          nextTime.setHours(11, 0, 0, 0);
-          
-          // Also update cutoff time
-          cutoffTime.setDate(cutoffTime.getDate() + 1);
-          cutoffTime.setHours(11, 30, 0, 0);
-        }
+        // Also update next batch start time
+        nextBatchStartTime.setDate(nextBatchStartTime.getDate() + 1);
+        nextBatchStartTime.setHours(11, 0, 0, 0);
       }
       
-      // Calculate difference in seconds
-      const diffSeconds = Math.floor((nextTime - now) / 1000);
+      // Calculate time to next batch end in seconds
+      const diffSeconds = Math.floor((nextBatchEndTime - now) / 1000);
       setTimeRemaining(diffSeconds);
       
-      // Format next order window time display
-      const ampm = nextTime.getHours() >= 12 ? 'PM' : 'AM';
-      const displayHours = nextTime.getHours() % 12 || 12;
-      setNextOrderWindow(`${displayHours}:${nextMinute.toString().padStart(2, '0')} ${ampm}`);
+      // Format display times
+      const endAmPm = nextBatchEndTime.getHours() >= 12 ? 'PM' : 'AM';
+      const endHours = nextBatchEndTime.getHours() % 12 || 12;
+      const endMinutes = nextBatchEndTime.getMinutes().toString().padStart(2, '0');
       
-      // Format cutoff time display
-      const cutoffAmpm = cutoffTime.getHours() >= 12 ? 'PM' : 'AM';
-      const cutoffHours = cutoffTime.getHours() % 12 || 12;
-      const cutoffMinuteStr = cutoffTime.getMinutes().toString().padStart(2, '0');
-      setOrderCutoffTime(`${cutoffHours}:${cutoffMinuteStr} ${cutoffAmpm}`);
+      const startAmPm = nextBatchStartTime.getHours() >= 12 ? 'PM' : 'AM';
+      const startHours = nextBatchStartTime.getHours() % 12 || 12;
+      const startMinutes = nextBatchStartTime.getMinutes().toString().padStart(2, '0');
+      
+      // Set the display text
+      setNextOrderWindow(`${startHours}:${startMinutes} ${startAmPm}`);
+      setOrderCutoffTime(`${endHours}:${endMinutes} ${endAmPm}`);
     };
     
     calculateTimeRemaining();
