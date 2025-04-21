@@ -1135,10 +1135,91 @@ def ai_generate_response(prompt, user_history=None):
     try:
         client = openai.OpenAI(api_key=openai_api_key)
         
+        # Get current batch information to provide to the AI
+        batches = get_current_batches()
+        batch_time_info = ""
+        hot_restaurants_info = ""
+        
+        # Format batch timing information
+        if batches and len(batches) > 0:
+            # Get the batch time from the first batch
+            batch_time = datetime.fromisoformat(str(batches[0]['batch_time'])) if isinstance(batches[0]['batch_time'], str) else batches[0]['batch_time']
+            current_time = datetime.now()
+            
+            # Calculate time remaining for the batch
+            time_diff = batch_time - current_time
+            minutes_remaining = max(0, int(time_diff.total_seconds() / 60))
+            
+            if minutes_remaining > 0:
+                batch_time_str = batch_time.strftime("%I:%M %p")
+                batch_time_info = f"Current batch closes in {minutes_remaining} minutes. Order by {batch_time.strftime('%I:%M %p')} to get food delivered at {(batch_time + timedelta(minutes=30)).strftime('%I:%M %p')}."
+            else:
+                next_batch_time = batch_time + timedelta(minutes=30)
+                batch_time_info = f"Next batch will be at {next_batch_time.strftime('%I:%M %p')}. Order between {(next_batch_time - timedelta(minutes=5)).strftime('%I:%M %p')} and {next_batch_time.strftime('%I:%M %p')}."
+        
+        # Format hot restaurants information
+        if batches and len(batches) > 0:
+            hot_restaurants_info = "Current hot restaurants:\n"
+            for batch in batches:
+                restaurant = batch['restaurant_name']
+                location = batch['location']
+                current_orders = batch['current_orders']
+                max_orders = batch['max_orders']
+                fee = batch['delivery_fee']
+                free_item = batch.get('free_item', 'Free item')
+                
+                hot_restaurants_info += f"- {restaurant} at {location}: ${fee:.2f} delivery fee, {current_orders}/{max_orders} orders, Share & get {free_item}\n"
+        
+        # Enhanced system prompt that makes the AI more helpful and contextually aware
+        system_prompt = f"""
+        You are TreeHouse's friendly food delivery assistant, helping college students order food with a low $2-4 delivery fee.
+        
+        CURRENT BATCH INFORMATION:
+        {batch_time_info}
+        
+        CURRENT HOT RESTAURANTS:
+        {hot_restaurants_info}
+        
+        KEY GUIDELINES:
+        1. Be conversational, helpful, and natural - respond like a human assistant would.
+        2. Infer user intent intelligently - understand what they're asking for beyond literal commands.
+        3. When in doubt, be helpful rather than redirecting to commands.
+        
+        UNDERSTAND ALL COMMANDS:
+        - MENU or ??: Shows available restaurants
+        - ORDER [details]: Places an order
+        - PAY: Gets a payment link
+        - CANCEL: Cancels an order (within 10 minutes of ordering)
+        - HELP or INFO: Shows help information
+        - JOIN or START: Subscribes to messages
+        - STOP, CANCEL, UNSUBSCRIBE, END, or QUIT: Unsubscribes from messages
+        
+        IMPORTANT BEHAVIORS:
+        - If a user asks about deals, offers, or options, IMMEDIATELY show them the current hot restaurants with available free items.
+        - If a user says "yes" or affirms after you've offered information, provide that information right away.
+        - Always include the time remaining for the current batch or when the next batch starts.
+        - Always mention that sharing with friends gets them both free items.
+        - Focus on the $2-4 delivery fee as a key selling point compared to competitors charging $14-18.
+        
+        ABOUT TREEHOUSE:
+        - We have 5 rotating restaurants every 30 minutes with guaranteed delivery fees from $2-4 dollars
+        - Users can order from restaurants outside the featured 5, but delivery fees will be significantly higher
+        - Our group ordering system saves users 90% on delivery fees by batching orders together from multiple people to the same location
+        - Orders delivered hourly - users must order by :25-:30 to get food at the top of the next hour
+        - Sharing with friends gets both people free items when they join the same batch
+        - First-time orders: Users can pay after they get their food
+        - For building pickups (libraries, student centers, etc.): Food is delivered to designated pickup spots in those buildings
+        - For dorm orders: Pickup from an RA dorm host on their floor or neighboring floor
+        - We deliver daily from 11am to 10pm
+        
+        Your tone is friendly, helpful, and efficient - you want to make ordering food as easy as possible for college students!
+        """
+        
         # Prepare conversation history if provided
-        messages = []
+        messages = [{"role": "system", "content": system_prompt}]
+        
         if user_history:
-            for entry in user_history:
+            for entry in user_history[-8:]:  # Include more conversation history for better context
                 if entry['role'] == 'user':
                     messages.append({"role": "user", "content": entry['content']})
                 else:
@@ -1147,7 +1228,7 @@ def ai_generate_response(prompt, user_history=None):
         # Add the current prompt
         messages.append({"role": "user", "content": prompt})
         
-        # Call OpenAI API
+        # Call OpenAI API with increased temperature for more dynamic responses
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
@@ -1361,6 +1442,35 @@ def ai_process_order(order_text, phone_number):
     
     return response, restaurant_name, batch
 
+
+# General query detection for menu/options requests
+def is_menu_request(message):
+    message_lower = message.lower()
+    menu_keywords = [
+        'menu', 'restaurants', 'options', 'deals', 'offer', 'special', 
+        'what', 'food', 'eat', 'order', 'get', 'available', 'discount', 
+        'yes', 'yeah', 'sure', 'ok', 'okay', 'show me'
+    ]
+    
+    # Check for questions about what's available
+    if any(phrase in message_lower for phrase in [
+        'what can i', 'what do you', 'what is', "what's", 'what are', 
+        'show me', 'tell me', 'deals', 'options'
+    ]):
+        return True
+        
+    # Check for single affirmative responses that might follow a menu offer
+    if len(message_lower.split()) <= 2 and any(word in message_lower for word in [
+        'yes', 'yeah', 'sure', 'ok', 'okay', 'please', 'y', 'yep', 'yup'
+    ]):
+        return True
+        
+    # Check for direct menu keywords
+    if any(word in message_lower.split() for word in menu_keywords):
+        return True
+        
+    return False
+
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
     # Get the incoming message details
@@ -1480,7 +1590,7 @@ def sms_webhook():
     # Process command based on the first word (lowercase for case insensitivity)
     first_word = incoming_message.split(' ')[0].lower()
     
-    if first_word == 'menu' or first_word == 'restaurants':
+    if first_word == 'menu' or first_word == 'restaurants' or is_menu_request(incoming_message):
         # Get current batches
         batches = get_current_batches()
         response = format_batch_info(batches)
