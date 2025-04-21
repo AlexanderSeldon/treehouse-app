@@ -1162,62 +1162,22 @@ def ai_generate_response(prompt, user_history=None):
         batch_time_info = ""
         hot_restaurants_info = ""
         
-        # Format batch timing information - UPDATED LOGIC
+        # Format batch timing information
         if batches and len(batches) > 0:
             # Get the batch time from the first batch
             batch_time = datetime.fromisoformat(str(batches[0]['batch_time'])) if isinstance(batches[0]['batch_time'], str) else batches[0]['batch_time']
             current_time = datetime.now()
             
-            # Determine if we're in an ordering window
-            current_minute = current_time.minute
-            in_window1 = (current_minute >= 25 and current_minute < 30)
-            in_window2 = (current_minute >= 55 or current_minute < 0)  # The XX:55-XX:00 window
-            
-            # Get the current batch end time
-            if in_window1:
-                # We're in the XX:25-XX:30 window, current batch ends at XX:30
-                batch_end_time = datetime(current_time.year, current_time.month, current_time.day, 
-                                          current_time.hour, 30, 0)
-                next_window_time = datetime(current_time.year, current_time.month, current_time.day, 
-                                            current_time.hour, 55, 0)
-            elif in_window2:
-                # We're in the XX:55-XX:00 window, current batch ends at (XX+1):00
-                if current_minute >= 55:
-                    batch_end_time = datetime(current_time.year, current_time.month, current_time.day, 
-                                              current_time.hour + 1, 0, 0)
-                else:
-                    batch_end_time = datetime(current_time.year, current_time.month, current_time.day, 
-                                              current_time.hour, 0, 0)
-                next_window_time = datetime(current_time.year, current_time.month, current_time.day, 
-                                            current_time.hour + 1, 25, 0)
-            elif current_minute < 25:
-                # Next batch ends at XX:30
-                batch_end_time = datetime(current_time.year, current_time.month, current_time.day, 
-                                          current_time.hour, 30, 0)
-                next_window_time = datetime(current_time.year, current_time.month, current_time.day, 
-                                            current_time.hour, 25, 0)
-            elif current_minute < 55:
-                # Next batch ends at (XX+1):00
-                batch_end_time = datetime(current_time.year, current_time.month, current_time.day, 
-                                          current_time.hour + 1, 0, 0)
-                next_window_time = datetime(current_time.year, current_time.month, current_time.day, 
-                                            current_time.hour, 55, 0)
-            
             # Calculate time remaining for the batch
-            time_diff = batch_end_time - current_time
+            time_diff = batch_time - current_time
             minutes_remaining = max(0, int(time_diff.total_seconds() / 60))
             
-            # Format the times for display
-            batch_end_str = batch_end_time.strftime("%I:%M %p")
-            next_window_str = next_window_time.strftime("%I:%M %p")
-            current_time_str = current_time.strftime("%I:%M %p")
-            
-            if in_window1 or in_window2:
-                # We're in an ordering window
-                batch_time_info = f"Current time is {current_time_str}. The ordering window is open! It closes in {minutes_remaining} minutes (at {batch_end_str}). Order now to get food delivered soon after."
+            if minutes_remaining > 0:
+                batch_time_str = batch_time.strftime("%I:%M %p")
+                batch_time_info = f"Current batch closes in {minutes_remaining} minutes. Order by {batch_time.strftime('%I:%M %p')} to get food delivered at {(batch_time + timedelta(minutes=30)).strftime('%I:%M %p')}."
             else:
-                # We're outside an ordering window
-                batch_time_info = f"Current time is {current_time_str}. Next ordering window opens at {next_window_str}. Current batch ends at {batch_end_str}."
+                next_batch_time = batch_time + timedelta(minutes=30)
+                batch_time_info = f"Next batch will be at {next_batch_time.strftime('%I:%M %p')}. Order between {(next_batch_time - timedelta(minutes=5)).strftime('%I:%M %p')} and {next_batch_time.strftime('%I:%M %p')}."
         
         # Format hot restaurants information
         if batches and len(batches) > 0:
@@ -1267,7 +1227,7 @@ def ai_generate_response(prompt, user_history=None):
         - We have 5 rotating restaurants every 30 minutes with guaranteed delivery fees from $2-4 dollars
         - Users can order from restaurants outside the featured 5, but delivery fees will be significantly higher
         - Our group ordering system saves users 90% on delivery fees by batching orders together from multiple people to the same location
-        - Orders are batched every 30 minutes - at XX:25-XX:30 and XX:55-XX:00
+        - Orders delivered hourly - users must order by :25-:30 to get food at the top of the next hour
         - Sharing with friends gets both people free items when they join the same batch
         - First-time orders: Users can pay after they get their food
         - For building pickups (libraries, student centers, etc.): Food is delivered to designated pickup spots in those buildings
