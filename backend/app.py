@@ -242,21 +242,12 @@ def init_restaurant_batches():
     current_hour = now.hour
     current_minute = now.minute
     
-    # Find next batch time based on two windows: XX:25-XX:30 and XX:55-XX:00
+    # Find next batch time
     next_batch_hour = current_hour
-    next_batch_minute = 0
+    next_batch_minute = 30 if current_minute < 25 else 0
     
-    # Determine which batch window we're closest to
-    if current_minute < 25:
-        # Next batch is at XX:25
-        next_batch_minute = 25
-    elif current_minute < 55:
-        # Next batch is at XX:55
-        next_batch_minute = 55
-    else:
-        # Next batch is at the top of next hour (XX:00)
+    if next_batch_minute == 0:
         next_batch_hour += 1
-        next_batch_minute = 0
         if next_batch_hour >= 24:
             next_batch_hour = 0
     
@@ -280,26 +271,13 @@ def init_restaurant_batches():
     # Create batches for the next few hours
     locations = ["Student Center", "James Stukel Tower", "University Hall", "Library"]
     
-    for i in range(6):  # Create 6 upcoming batches (covering more time windows)
-        # Calculate batch times using both XX:25 and XX:55 windows
-        if i % 2 == 0:
-            # Even indices - use XX:25 batch times
-            batch_hour = next_batch_hour + (i // 2)
-            batch_minute = 25
-        else:
-            # Odd indices - use XX:55 batch times
-            batch_hour = next_batch_hour + (i // 2)
-            batch_minute = 55
-        
-        # Handle day rollover
-        if batch_hour >= 24:
-            batch_hour -= 24
+    for i in range(3):  # Create 3 upcoming batches
+        batch_time = next_batch_time + timedelta(minutes=30*i)
         
         # Only create batches during operating hours
+        batch_hour = batch_time.hour
         if batch_hour < 11 or batch_hour >= 22:
             continue
-        
-        batch_time = datetime(now.year, now.month, now.day, batch_hour, batch_minute)
         
         # For each restaurant, create a batch
         for restaurant in hot_restaurants:
