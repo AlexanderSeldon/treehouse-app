@@ -16,6 +16,8 @@ import urllib.parse
 import uuid
 from twilio.base.exceptions import TwilioRestException
 from flask import Flask, request, jsonify, send_from_directory, redirect, flash, session
+import threading
+import time
 
 
 # Load environment variables
@@ -1452,6 +1454,55 @@ def ai_process_order(order_text, phone_number):
     
     return response, restaurant_name, batch
 
+
+def location_cleanup_task():
+    """Background task to clean up expired location data from sessions"""
+    while True:
+        try:
+            now = datetime.now()
+            expired_count = 0
+            
+            # Check all active sessions
+            for phone_number in list(active_sessions.keys()):
+                session = active_sessions[phone_number]
+                
+                # Skip if no location data
+                if 'location_timestamp' not in session:
+                    continue
+                    
+                # Check if location data is expired (24 hours)
+                timestamp = session['location_timestamp']
+                if isinstance(timestamp, str):
+                    try:
+                        location_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    except:
+                        location_time = timestamp
+                else:
+                    location_time = timestamp
+                    
+                if location_time and (now - location_time).total_seconds() > 86400:
+                    # Remove location data but keep the rest of the session
+                    session.pop('last_latitude', None)
+                    session.pop('last_longitude', None)
+                    session.pop('location_timestamp', None)
+                    expired_count += 1
+            
+            if expired_count > 0:
+                logger.info(f"Cleaned up {expired_count} expired location entries")
+                
+            # Sleep for an hour before next cleanup
+            time.sleep(3600)
+            
+        except Exception as e:
+            logger.error(f"Error in location cleanup task: {e}")
+            # Sleep a bit before retrying
+            time.sleep(300)
+
+# Start the cleanup task when the app starts
+# Add this after your database initialization but before app.run()
+cleanup_thread = threading.Thread(target=location_cleanup_task)
+cleanup_thread.daemon = True
+cleanup_thread.start()
 
 # Updated menu detection function
 def is_menu_request(message):
@@ -3001,9 +3052,37 @@ def serve_privacy_policy_simple():
 
 
 
+# First, let's enhance the update_session_location function to track when a location was shared
+def update_session_location(phone_number, latitude, longitude, send_followup=True):
+    """
+    Update location in session storage and set flag for follow-up message
+    
+    Parameters:
+    - phone_number: User's phone number
+    - latitude: Location latitude
+    - longitude: Location longitude
+    - send_followup: Boolean indicating if a follow-up message should be sent
+    """
+    current_time = datetime.now()
+    
+    if phone_number in active_sessions:
+        active_sessions[phone_number]['last_latitude'] = latitude
+        active_sessions[phone_number]['last_longitude'] = longitude
+        active_sessions[phone_number]['location_timestamp'] = current_time
+        active_sessions[phone_number]['send_location_followup'] = send_followup
+    else:
+        active_sessions[phone_number] = {
+            'last_latitude': latitude,
+            'last_longitude': longitude,
+            'location_timestamp': current_time,
+            'send_location_followup': send_followup
+        }
+    logger.info(f"Updated session location for {phone_number}, follow-up flag: {send_followup}")
+
+# Next, modify the /api/update-location endpoint to send a follow-up message after location is shared
 @app.route('/api/update-location', methods=['POST'])
 def update_location():
-    """Store user location in the database"""
+    """Store user location in the database and send follow-up message with restaurants"""
     data = request.json
     phone_number = data.get('phone_number')
     location = data.get('location')
@@ -3028,7 +3107,7 @@ def update_location():
         update_location_schema()
         
         # Update both database and session
-        update_session_location(clean_phone, latitude, longitude)
+        update_session_location(clean_phone, latitude, longitude, send_followup=True)
         
         conn = sqlite3.connect('treehouse.db')
         c = conn.cursor()
@@ -3061,18 +3140,99 @@ def update_location():
         # Get batches relevant to the user's location
         nearby_batches = get_location_based_batches(latitude, longitude)
         
+        # Send follow-up message with restaurant information
+        if twilio_client:
+            try:
+                # Format a message with all hotspot restaurants and their deals
+                follow_up_message = format_restaurant_deals(nearby_batches)
+                
+                # Send the message
+                twilio_client.messages.create(
+                    body=follow_up_message,
+                    from_=twilio_phone,
+                    to=f"+{clean_phone}"
+                )
+                logger.info(f"Sent restaurant deals follow-up message to +{clean_phone}")
+                
+                # Mark that we've sent the follow-up message
+                if clean_phone in active_sessions:
+                    active_sessions[clean_phone]['sent_location_followup'] = True
+            except Exception as e:
+                logger.error(f"Error sending follow-up message: {e}")
+        
         conn.close()
         
         return jsonify({
             "success": True,
             "user_id": user_id,
             "nearby_locations": nearby_locations,
-            "nearby_batches": nearby_batches
+            "nearby_batches": nearby_batches,
+            "follow_up_sent": True
         }), 200
         
     except Exception as e:
         logger.error(f"Database error updating location: {e}")
         return jsonify({"error": str(e)}), 500
+
+# Create a function to format a comprehensive message about restaurant deals
+def format_restaurant_deals(batches):
+    """
+    Format a message with all hotspot restaurants and their free item deals
+    
+    Parameters:
+    - batches: List of batch data with restaurant information
+    
+    Returns:
+    - Formatted message string
+    """
+    if not batches:
+        return "No restaurant deals available at this time. Text MENU to see when our next batch opens!"
+    
+    # Get the batch time from the first batch
+    batch_time = datetime.fromisoformat(str(batches[0]['batch_time'])) if isinstance(batches[0]['batch_time'], str) else batches[0]['batch_time']
+    batch_time_str = batch_time.strftime("%I:%M %p")
+    
+    # Calculate when to order by (X:25)
+    order_by_time = batch_time - timedelta(minutes=5)
+    order_by_str = order_by_time.strftime("%I:%M %p")
+    
+    # Format a comprehensive response that focuses on the deals
+    response = f"Thanks for sharing your location! Here are the restaurants available near you (Order by {order_by_str}):\n\n"
+    
+    # Group by restaurants to focus on the free items
+    restaurant_deals = {}
+    
+    for batch in batches:
+        restaurant = batch['restaurant_name']
+        location = batch['location']
+        fee = batch['delivery_fee']
+        free_item = batch.get('free_item', 'Free item')
+        
+        if restaurant not in restaurant_deals:
+            restaurant_deals[restaurant] = {
+                'fee': fee,
+                'free_item': free_item,
+                'locations': [location]
+            }
+        elif location not in restaurant_deals[restaurant]['locations']:
+            restaurant_deals[restaurant]['locations'].append(location)
+    
+    # Format each restaurant deal
+    for restaurant, details in restaurant_deals.items():
+        locations_str = ", ".join(details['locations'])
+        response += f"• {restaurant}: ${details['fee']:.2f} delivery fee\n"
+        response += f"  FREE DEAL: {details['free_item']}\n"
+        response += f"  Pickup at: {locations_str}\n\n"
+    
+    # Add a dedicated referral section highlighting that BOTH people get free items
+    response += "🔥 REFER A FRIEND BONUS 🔥\n"
+    response += "When you AND your friend order from the same restaurant in the same batch, BOTH of you get the free item!\n\n"
+    
+    response += f"Text ORDER followed by what you want from any of these restaurants.\n"
+    response += f"Example: ORDER a burrito bowl from Chipotle\n\n"
+    response += f"Text MENU anytime to see current batches and deals!"
+    
+    return response
 
 def update_location_schema():
     """Add location tracking fields to the database if they don't exist"""
