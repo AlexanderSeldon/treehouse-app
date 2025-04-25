@@ -15,6 +15,7 @@ import math
 import urllib.parse
 import uuid
 from twilio.base.exceptions import TwilioRestException
+from flask import Flask, request, jsonify, send_from_directory, redirect, flash, session
 
 
 # Load environment variables
@@ -27,12 +28,16 @@ logger = logging.getLogger(__name__)
 active_sessions = {}  # Store active ordering sessions by phone number
 
 app = Flask(__name__)
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'treehouse-secret-key')
 CORS(app)
 
 
 @app.route('/menus/<path:filename>')
 def serve_menu(filename):
     return send_from_directory('static/menus', filename)
+
+
+
 
 # Database setup
 def init_db():
@@ -1989,119 +1994,12 @@ def sms_webhook():
         # Process general message with AI assistance
         # Check if OpenAI API is available
         if openai_api_key:
-            # Get current batch information to provide to the AI
-            batches = get_current_batches()
-            batch_time_info = ""
-            hot_restaurants_info = ""
+            # Generate AI response
+            response = ai_generate_response(incoming_message, user_history)
             
-            # Format batch timing information
-            if batches and len(batches) > 0:
-                # Get the batch time from the first batch
-                batch_time = datetime.fromisoformat(str(batches[0]['batch_time'])) if isinstance(batches[0]['batch_time'], str) else batches[0]['batch_time']
-                current_time = datetime.now()
-                
-                # Calculate time remaining for the batch
-                time_diff = batch_time - current_time
-                minutes_remaining = max(0, int(time_diff.total_seconds() / 60))
-                
-                if minutes_remaining > 0:
-                    batch_time_str = batch_time.strftime("%I:%M %p")
-                    batch_time_info = f"Current batch closes in {minutes_remaining} minutes. Order by {batch_time.strftime('%I:%M %p')} to get food delivered at {(batch_time + timedelta(minutes=30)).strftime('%I:%M %p')}."
-                else:
-                    next_batch_time = batch_time + timedelta(minutes=30)
-                    batch_time_info = f"Next batch will be at {next_batch_time.strftime('%I:%M %p')}. Order between {(next_batch_time - timedelta(minutes=5)).strftime('%I:%M %p')} and {next_batch_time.strftime('%I:%M %p')}."
-            
-            # Format hot restaurants information
-            if batches and len(batches) > 0:
-                hot_restaurants_info = "Current hot restaurants:\n"
-                for batch in batches:
-                    restaurant = batch['restaurant_name']
-                    location = batch['location']
-                    current_orders = batch['current_orders']
-                    max_orders = batch['max_orders']
-                    fee = batch['delivery_fee']
-                    free_item = batch.get('free_item', 'Free item')
-                    
-                    hot_restaurants_info += f"- {restaurant} at {location}: ${fee:.2f} delivery fee, {current_orders}/{max_orders} orders, Share & get {free_item}\n"
-            
-            # Enhanced system prompt that makes the AI more helpful and contextually aware
-            system_prompt = f"""
-            You are TreeHouse's friendly food delivery assistant, helping college students order food with a low $2-4 delivery fee.
-            
-            CURRENT BATCH INFORMATION:
-            {batch_time_info}
-            
-            CURRENT HOT RESTAURANTS:
-            {hot_restaurants_info}
-            
-            KEY GUIDELINES:
-            1. Be conversational, helpful, and natural - respond like a human assistant would.
-            2. Infer user intent intelligently - understand what they're asking for beyond literal commands.
-            3. When in doubt, be helpful rather than redirecting to commands.
-            
-            UNDERSTAND ALL COMMANDS:
-            - MENU or ??: Shows available restaurants
-            - ORDER [details]: Places an order
-            - PAY: Gets a payment link
-            - CANCEL: Cancels an order (within 10 minutes of ordering)
-            - HELP or INFO: Shows help information
-            - JOIN or START: Subscribes to messages
-            - STOP, CANCEL, UNSUBSCRIBE, END, or QUIT: Unsubscribes from messages
-            
-            IMPORTANT BEHAVIORS:
-            - If a user asks about deals, offers, or options, IMMEDIATELY show them the current hot restaurants with available free items.
-            - If a user says "yes" or affirms after you've offered information, provide that information right away.
-            - Always include the time remaining for the current batch or when the next batch starts.
-            - Always mention that sharing with friends gets them both free items.
-            - Focus on the $2-4 delivery fee as a key selling point compared to competitors charging $14-18.
-            
-            ABOUT TREEHOUSE:
-            - We have 5 rotating restaurants every 30 minutes with guaranteed delivery fees from $2-4 dollars
-            - Users can order from restaurants outside the featured 5, but delivery fees will be significantly higher
-            - Our group ordering system saves users 90% on delivery fees by batching orders together from multiple people to the same location
-            - Orders delivered hourly - users must order by :25-:30 to get food at the top of the next hour
-            - Sharing with friends gets both people free items when they join the same batch
-            - First-time orders: Users can pay after they get their food
-            - For building pickups (libraries, student centers, etc.): Food is delivered to designated pickup spots in those buildings
-            - For dorm orders: Pickup from an RA dorm host on their floor or neighboring floor
-            - We deliver daily from 11am to 10pm
-            
-            Your tone is friendly, helpful, and efficient - you want to make ordering food as easy as possible for college students!
-            """
-            
-            # Prepare messages for the API call
-            messages = [{"role": "system", "content": system_prompt}]
-            
-            # Add conversation history
-            if len(user_history) > 0:
-                for entry in user_history[-8:]:  # Last 8 messages (4 exchanges)
-                    messages.append({
-                        "role": entry["role"],
-                        "content": entry["content"]
-                    })
-            
-            # Add the current message
-            messages.append({"role": "user", "content": incoming_message})
-            
-            try:
-                # Call OpenAI API
-                client = openai.OpenAI(api_key=openai_api_key)
-                ai_response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=messages,
-                    max_tokens=300,
-                    temperature=0.7
-                )
-                
-                # Extract the AI response
-                response = ai_response.choices[0].message.content
-                
-                # Add a suggestion to use the primary commands if not mentioned
-                if not any(keyword in response.lower() for keyword in ['menu', 'order', 'pay']):
-                    response += "\n\nText 'MENU' to see restaurant options or 'ORDER' followed by what you want."
-            except Exception as e:
-                logger.error(f"Error using OpenAI for conversation: {e}")
-                response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
+            # Add a suggestion to use the primary commands if not mentioned
+            if not any(keyword in response.lower() for keyword in ['menu', 'order', 'pay']):
+                response += "\n\nText 'MENU' to see restaurant options or 'ORDER' followed by what you want."
         else:
             # Fallback response without AI
             response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
