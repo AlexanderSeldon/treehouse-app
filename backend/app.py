@@ -10,14 +10,6 @@ from twilio.twiml.messaging_response import MessagingResponse
 import stripe
 import openai
 import random
-from flask import request, jsonify
-import math
-import urllib.parse
-import uuid
-from twilio.base.exceptions import TwilioRestException
-from flask import Flask, request, jsonify, send_from_directory, redirect, flash, session
-import threading
-import time
 
 
 # Load environment variables
@@ -30,16 +22,12 @@ logger = logging.getLogger(__name__)
 active_sessions = {}  # Store active ordering sessions by phone number
 
 app = Flask(__name__)
-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'treehouse-secret-key')
 CORS(app)
 
 
 @app.route('/menus/<path:filename>')
 def serve_menu(filename):
     return send_from_directory('static/menus', filename)
-
-
-
 
 # Database setup
 def init_db():
@@ -1455,55 +1443,6 @@ def ai_process_order(order_text, phone_number):
     return response, restaurant_name, batch
 
 
-def location_cleanup_task():
-    """Background task to clean up expired location data from sessions"""
-    while True:
-        try:
-            now = datetime.now()
-            expired_count = 0
-            
-            # Check all active sessions
-            for phone_number in list(active_sessions.keys()):
-                session = active_sessions[phone_number]
-                
-                # Skip if no location data
-                if 'location_timestamp' not in session:
-                    continue
-                    
-                # Check if location data is expired (24 hours)
-                timestamp = session['location_timestamp']
-                if isinstance(timestamp, str):
-                    try:
-                        location_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                    except:
-                        location_time = timestamp
-                else:
-                    location_time = timestamp
-                    
-                if location_time and (now - location_time).total_seconds() > 86400:
-                    # Remove location data but keep the rest of the session
-                    session.pop('last_latitude', None)
-                    session.pop('last_longitude', None)
-                    session.pop('location_timestamp', None)
-                    expired_count += 1
-            
-            if expired_count > 0:
-                logger.info(f"Cleaned up {expired_count} expired location entries")
-                
-            # Sleep for an hour before next cleanup
-            time.sleep(3600)
-            
-        except Exception as e:
-            logger.error(f"Error in location cleanup task: {e}")
-            # Sleep a bit before retrying
-            time.sleep(300)
-
-# Start the cleanup task when the app starts
-# Add this after your database initialization but before app.run()
-cleanup_thread = threading.Thread(target=location_cleanup_task)
-cleanup_thread.daemon = True
-cleanup_thread.start()
-
 # Updated menu detection function
 def is_menu_request(message):
     message_lower = message.lower()
@@ -1533,51 +1472,6 @@ def is_menu_request(message):
         return True
             
     return False
-
-
-def generate_location_request_link(phone_number, message_text="Check restaurants near you"):
-    """
-    Generate a deep link that will request location permissions and 
-    return nearby restaurant data. This is the Python counterpart to
-    the JavaScript generateLocationLink method.
-    """
-    # Clean the phone number (remove non-digits)
-    clean_phone = ''.join(filter(str.isdigit, phone_number))
-    
-    # Generate a unique request ID
-    request_id = str(uuid.uuid4())[:8]
-    
-    # Base URL for your application
-    base_url = "https://treehouseneighbor.com"
-    
-    # Create deep link parameters (similar to the JS implementation structure)
-    params = {
-        'p': clean_phone,     # Phone number
-        'r': request_id,      # Request ID for tracking
-        'a': 'locate',        # Action to perform
-        'm': message_text     # Custom message
-    }
-    
-    # URL encode the parameters
-    param_string = urllib.parse.urlencode(params)
-    
-    # Construct the final URL - this matches the /l route in your Flask app
-    location_link = f"{base_url}/l?{param_string}"
-    
-    return location_link
-
-def update_session_location(phone_number, latitude, longitude):
-    """Update location in session storage"""
-    if phone_number in active_sessions:
-        active_sessions[phone_number]['last_latitude'] = latitude
-        active_sessions[phone_number]['last_longitude'] = longitude
-    else:
-        active_sessions[phone_number] = {
-            'last_latitude': latitude,
-            'last_longitude': longitude
-        }
-    logger.info(f"Updated session location for {phone_number}")
-
 
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
@@ -1697,70 +1591,6 @@ def sms_webhook():
     
     # Process command based on the first word (lowercase for case insensitivity)
     first_word = incoming_message.split(' ')[0].lower()
-    
-    # Proactively send location link for menu or location queries
-    if (first_word == 'menu' or first_word == 'restaurants' or 
-        is_menu_request(incoming_message) or
-        any(keyword in incoming_message.lower() for keyword in 
-            ['near', 'nearby', 'closest', 'location', 'around me', 'in my area', 'near me'])):
-        
-        # Check if we already have location data for this user in the database
-        user_has_location = False
-        
-        try:
-            # Check if user has recent location data
-            c.execute("""
-                SELECT last_latitude, last_longitude, location_updated 
-                FROM users 
-                WHERE phone_number = ? AND last_latitude IS NOT NULL
-            """, (clean_phone,))
-            
-            location_data = c.fetchone()
-            if location_data:
-                # Check if location is recent (within last 24 hours)
-                location_timestamp = location_data[2]
-                if isinstance(location_timestamp, str):
-                    try:
-                        location_time = datetime.fromisoformat(location_timestamp.replace('Z', '+00:00'))
-                    except:
-                        location_time = None
-                else:
-                    location_time = location_timestamp
-                
-                if location_time and (datetime.now() - location_time).total_seconds() < 86400:  # 24 hours
-                    user_has_location = True
-                    # Store location in session for future use
-                    if 'last_latitude' not in active_sessions.get(clean_phone, {}):
-                        active_sessions[clean_phone]['last_latitude'] = location_data[0]
-                        active_sessions[clean_phone]['last_longitude'] = location_data[1]
-        except Exception as e:
-            logger.error(f"Error checking user location: {e}")
-        
-        # If we don't have location or if specifically asking about location
-        if not user_has_location or any(keyword in incoming_message.lower() for keyword in 
-                                        ['near', 'nearby', 'closest', 'location', 'around me']):
-            # Generate a location request link
-            location_link = generate_location_request_link(clean_phone)
-            
-            # Send location link first
-            response = (
-                "To show you restaurants near you with $4 delivery, I need your location. "
-                f"Please tap this link: {location_link}\n\n"
-                "After sharing your location, I'll show you available restaurants and pickup spots in your area."
-            )
-            
-            # Update conversation history
-            user_history.append({'role': 'user', 'content': incoming_message})
-            user_history.append({'role': 'assistant', 'content': response})
-            active_sessions[clean_phone]['conversation_history'] = user_history
-            
-            resp.message(response)
-            logger.info(f"Sent location request to {from_number}")
-            return str(resp)
-        else:
-            # We have location data, so continue to show menu
-            # The existing menu code will run next
-            pass
     
     # Check for exact direct commands first
     if first_word == 'menu' or first_word == 'restaurants' or is_menu_request(incoming_message):
@@ -2018,39 +1848,123 @@ def sms_webhook():
         resp.message(response)
         logger.info(f"Processed cancellation request from {from_number}")
     
-    # Detect location-based menu requests
-    location_keywords = ['near me', 'nearby', 'closest', 'location', 'around me']
-
-    # Check if message contains location keywords
-    if any(keyword in incoming_message.lower() for keyword in location_keywords):
-        # Generate a location request link
-        location_link = generate_location_request_link(clean_phone)
-        
-        # Create message with the link
-        response = (
-            "To see restaurants near you, please tap this link: "
-            f"{location_link}\n\n"
-            "This will show you pickup spots and restaurants in your area."
-        )
-        
-        # Update conversation history
-        user_history.append({'role': 'user', 'content': incoming_message})
-        user_history.append({'role': 'assistant', 'content': response})
-        active_sessions[clean_phone]['conversation_history'] = user_history
-        
-        resp.message(response)
-        return str(resp)
-        
     else:
         # Process general message with AI assistance
         # Check if OpenAI API is available
         if openai_api_key:
-            # Generate AI response
-            response = ai_generate_response(incoming_message, user_history)
+            # Get current batch information to provide to the AI
+            batches = get_current_batches()
+            batch_time_info = ""
+            hot_restaurants_info = ""
             
-            # Add a suggestion to use the primary commands if not mentioned
-            if not any(keyword in response.lower() for keyword in ['menu', 'order', 'pay']):
-                response += "\n\nText 'MENU' to see restaurant options or 'ORDER' followed by what you want."
+            # Format batch timing information
+            if batches and len(batches) > 0:
+                # Get the batch time from the first batch
+                batch_time = datetime.fromisoformat(str(batches[0]['batch_time'])) if isinstance(batches[0]['batch_time'], str) else batches[0]['batch_time']
+                current_time = datetime.now()
+                
+                # Calculate time remaining for the batch
+                time_diff = batch_time - current_time
+                minutes_remaining = max(0, int(time_diff.total_seconds() / 60))
+                
+                if minutes_remaining > 0:
+                    batch_time_str = batch_time.strftime("%I:%M %p")
+                    batch_time_info = f"Current batch closes in {minutes_remaining} minutes. Order by {batch_time.strftime('%I:%M %p')} to get food delivered at {(batch_time + timedelta(minutes=30)).strftime('%I:%M %p')}."
+                else:
+                    next_batch_time = batch_time + timedelta(minutes=30)
+                    batch_time_info = f"Next batch will be at {next_batch_time.strftime('%I:%M %p')}. Order between {(next_batch_time - timedelta(minutes=5)).strftime('%I:%M %p')} and {next_batch_time.strftime('%I:%M %p')}."
+            
+            # Format hot restaurants information
+            if batches and len(batches) > 0:
+                hot_restaurants_info = "Current hot restaurants:\n"
+                for batch in batches:
+                    restaurant = batch['restaurant_name']
+                    location = batch['location']
+                    current_orders = batch['current_orders']
+                    max_orders = batch['max_orders']
+                    fee = batch['delivery_fee']
+                    free_item = batch.get('free_item', 'Free item')
+                    
+                    hot_restaurants_info += f"- {restaurant} at {location}: ${fee:.2f} delivery fee, {current_orders}/{max_orders} orders, Share & get {free_item}\n"
+            
+            # Enhanced system prompt that makes the AI more helpful and contextually aware
+            system_prompt = f"""
+            You are TreeHouse's friendly food delivery assistant, helping college students order food with a low $2-4 delivery fee.
+            
+            CURRENT BATCH INFORMATION:
+            {batch_time_info}
+            
+            CURRENT HOT RESTAURANTS:
+            {hot_restaurants_info}
+            
+            KEY GUIDELINES:
+            1. Be conversational, helpful, and natural - respond like a human assistant would.
+            2. Infer user intent intelligently - understand what they're asking for beyond literal commands.
+            3. When in doubt, be helpful rather than redirecting to commands.
+            
+            UNDERSTAND ALL COMMANDS:
+            - MENU or ??: Shows available restaurants
+            - ORDER [details]: Places an order
+            - PAY: Gets a payment link
+            - CANCEL: Cancels an order (within 10 minutes of ordering)
+            - HELP or INFO: Shows help information
+            - JOIN or START: Subscribes to messages
+            - STOP, CANCEL, UNSUBSCRIBE, END, or QUIT: Unsubscribes from messages
+            
+            IMPORTANT BEHAVIORS:
+            - If a user asks about deals, offers, or options, IMMEDIATELY show them the current hot restaurants with available free items.
+            - If a user says "yes" or affirms after you've offered information, provide that information right away.
+            - Always include the time remaining for the current batch or when the next batch starts.
+            - Always mention that sharing with friends gets them both free items.
+            - Focus on the $2-4 delivery fee as a key selling point compared to competitors charging $14-18.
+            
+            ABOUT TREEHOUSE:
+            - We have 5 rotating restaurants every 30 minutes with guaranteed delivery fees from $2-4 dollars
+            - Users can order from restaurants outside the featured 5, but delivery fees will be significantly higher
+            - Our group ordering system saves users 90% on delivery fees by batching orders together from multiple people to the same location
+            - Orders delivered hourly - users must order by :25-:30 to get food at the top of the next hour
+            - Sharing with friends gets both people free items when they join the same batch
+            - First-time orders: Users can pay after they get their food
+            - For building pickups (libraries, student centers, etc.): Food is delivered to designated pickup spots in those buildings
+            - For dorm orders: Pickup from an RA dorm host on their floor or neighboring floor
+            - We deliver daily from 11am to 10pm
+            
+            Your tone is friendly, helpful, and efficient - you want to make ordering food as easy as possible for college students!
+            """
+            
+            # Prepare messages for the API call
+            messages = [{"role": "system", "content": system_prompt}]
+            
+            # Add conversation history
+            if len(user_history) > 0:
+                for entry in user_history[-8:]:  # Last 8 messages (4 exchanges)
+                    messages.append({
+                        "role": entry["role"],
+                        "content": entry["content"]
+                    })
+            
+            # Add the current message
+            messages.append({"role": "user", "content": incoming_message})
+            
+            try:
+                # Call OpenAI API
+                client = openai.OpenAI(api_key=openai_api_key)
+                ai_response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=messages,
+                    max_tokens=300,
+                    temperature=0.7
+                )
+                
+                # Extract the AI response
+                response = ai_response.choices[0].message.content
+                
+                # Add a suggestion to use the primary commands if not mentioned
+                if not any(keyword in response.lower() for keyword in ['menu', 'order', 'pay']):
+                    response += "\n\nText 'MENU' to see restaurant options or 'ORDER' followed by what you want."
+            except Exception as e:
+                logger.error(f"Error using OpenAI for conversation: {e}")
+                response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
         else:
             # Fallback response without AI
             response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
@@ -2107,194 +2021,32 @@ def test_sms_simple():
     lower_message = test_message.lower()
     first_word = lower_message.split(' ')[0]
     
-    # Check for menu or location-related requests
-    if (first_word == 'menu' or first_word == 'restaurants' or 
-        is_menu_request(test_message) or
-        any(keyword in test_message.lower() for keyword in 
-            ['near', 'nearby', 'closest', 'location', 'around me', 'near me'])):
+    if first_word in ['menu', 'restaurants']:
+        # Display restaurant list with links
+        batches = get_current_batches()
+        response = format_batch_info(batches)
         
-        # Check if we already have location data
-        user_has_location = False
+        # Update conversation history
+        user_history.append({'role': 'user', 'content': test_message})
+        user_history.append({'role': 'assistant', 'content': response})
+        active_sessions[clean_phone]['conversation_history'] = user_history
         
-        # Check if location exists in session first
-        if clean_phone in active_sessions and 'last_latitude' in active_sessions[clean_phone]:
-            user_has_location = True
-        else:
-            # Check database for location data
-            try:
-                c.execute("""
-                    SELECT last_latitude, last_longitude, location_updated 
-                    FROM users 
-                    WHERE phone_number = ? AND last_latitude IS NOT NULL
-                """, (clean_phone,))
-                
-                location_data = c.fetchone()
-                if location_data:
-                    # Check if location is recent
-                    location_timestamp = location_data[2]
-                    if isinstance(location_timestamp, str):
-                        try:
-                            location_time = datetime.fromisoformat(location_timestamp.replace('Z', '+00:00'))
-                        except:
-                            location_time = None
-                    else:
-                        location_time = location_timestamp
-                    
-                    if location_time and (datetime.now() - location_time).total_seconds() < 86400:
-                        user_has_location = True
-                        # Store in session
-                        active_sessions[clean_phone]['last_latitude'] = location_data[0]
-                        active_sessions[clean_phone]['last_longitude'] = location_data[1]
-            except Exception as e:
-                logger.error(f"Error checking user location in test: {e}")
-        
-        # If specifically asking about location or no location data
-        if not user_has_location or any(keyword in test_message.lower() for keyword in 
-                                        ['near', 'nearby', 'closest', 'location', 'around me']):
-            # Generate a location request link
-            location_link = generate_location_request_link(clean_phone)
+        # Create HTML display of restaurants
+        html_response += "<p><strong>Available Restaurants:</strong></p><ol>"
+        for batch in batches:
+            restaurant = batch['restaurant_name']
+            location = batch['location']
+            current_orders = batch['current_orders']
+            max_orders = batch['max_orders']
+            fee = batch['delivery_fee']
             
-            # Create location request response
-            response = (
-                "To show you restaurants near you with $4 delivery, I need your location. "
-                f"Please tap this link: {location_link}\n\n"
-                "After sharing your location, I'll show you available restaurants and pickup spots in your area."
-            )
+            batch_time = datetime.fromisoformat(str(batch['batch_time'])) if isinstance(batch['batch_time'], str) else batch['batch_time']
+            batch_time_str = batch_time.strftime("%I:%M %p")
             
-            # Update conversation history
-            user_history.append({'role': 'user', 'content': test_message})
-            user_history.append({'role': 'assistant', 'content': response})
-            active_sessions[clean_phone]['conversation_history'] = user_history
-            
-            # Create HTML response for the test interface
-            html_response += "<p><strong>Location Request:</strong></p>"
-            html_response += f"<p style='white-space: pre-line;'>{response}</p>"
-            
-            # Add clickable link for testing
-            html_response += f"""
-            <div style="margin-top: 10px; padding: 10px; background-color: #e9f7ef; border-radius: 8px;">
-                <p><strong>Location Link:</strong></p>
-                <p><a href="{location_link}" target="_blank">{location_link}</a></p>
-                <p>
-                    <button onclick="simulateLocationShare()" style="background-color:#1B4332; color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">
-                        Simulate Location Sharing
-                    </button>
-                </p>
-            </div>
-            
-            <script>
-            function simulateLocationShare() {{
-                // Simulate a user sharing their location
-                const latitude = 41.8708;  // UIC campus center coordinates
-                const longitude = -87.6505;
-                
-                // Update the active session with this location via AJAX call
-                fetch('/api/update-location', {{
-                    method: 'POST',
-                    headers: {{
-                        'Content-Type': 'application/json',
-                    }},
-                    body: JSON.stringify({{
-                        phone_number: '{test_phone}',
-                        location: {{
-                            latitude: latitude,
-                            longitude: longitude,
-                            accuracy: 10,
-                            timestamp: new Date().toISOString()
-                        }}
-                    }}),
-                }})
-                .then(response => response.json())
-                .then(data => {{
-                    if (data.success) {{
-                        alert('Location shared!\\nLatitude: ' + latitude + '\\nLongitude: ' + longitude);
-                        // Reload the page with menu command to simulate next step
-                        window.location.href = window.location.pathname + '?phone=' + encodeURIComponent('{test_phone}') + '&message=menu';
-                    }} else {{
-                        alert('Error sharing location: ' + (data.error || 'Unknown error'));
-                    }}
-                }})
-                .catch(error => {{
-                    alert('Error: ' + error);
-                }});
-            }}
-            </script>
-            """
-            return f"""
-            <html>
-                <head>
-                    <title>TreeHouse SMS Test</title>
-                    <style>
-                        body {{ font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }}
-                        form {{ background: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
-                        .response {{ background: #e9f5e9; padding: 20px; border-radius: 8px; }}
-                        input, button {{ padding: 8px; margin-bottom: 10px; }}
-                        h1, h2, h3, h4 {{ color: #1B4332; }}
-                        code {{ background: #eee; padding: 3px 5px; border-radius: 3px; }}
-                        .examples {{ margin-top: 30px; background: #f8f8f8; padding: 15px; border-radius: 8px; }}
-                    </style>
-                </head>
-                <body>
-                    <h1>TreeHouse SMS Simulator</h1>
-                    
-                    <form>
-                        <div>
-                            <label for="phone">Phone Number:</label>
-                            <input type="text" id="phone" name="phone" value="{test_phone}" style="width: 150px;">
-                        </div>
-                        <div>
-                            <label for="message">Message:</label>
-                            <input type="text" id="message" name="message" value="{test_message}" style="width: 300px;">
-                        </div>
-                        <button type="submit">Send</button>
-                    </form>
-                    
-                    <div class="response">
-                        {html_response}
-                    </div>
-                    
-                    <div class="examples">
-                        <h3>Example Commands:</h3>
-                        <ul>
-                            <li><code>menu</code> or <code>restaurants</code> - See available restaurants</li>
-                            <li><code>order</code> - Get ordering instructions</li>
-                            <li><code>order 2 burritos from Chipotle with extra guac</code> - Place a free-form order</li>
-                            <li><code>pay</code> - Get a payment link</li>
-                            <li><code>help</code> or <code>info</code> - Get help information</li>
-                            <li><code>cancel</code> - Cancel your current order (within 10 minutes)</li>
-                            <li>Try asking a general question - AI will respond if configured</li>
-                        </ul>
-                    </div>
-                </body>
-            </html>
-            """
-        else:
-            # We have location, show the menu as usual
-            # Display restaurant list with links
-            batches = get_current_batches()
-            response = format_batch_info(batches)
-            
-            # Update conversation history
-            user_history.append({'role': 'user', 'content': test_message})
-            user_history.append({'role': 'assistant', 'content': response})
-            active_sessions[clean_phone]['conversation_history'] = user_history
-            
-            # Create HTML display of restaurants
-            html_response += "<p><strong>Available Restaurants:</strong></p><ol>"
-            for batch in batches:
-                restaurant = batch['restaurant_name']
-                location = batch['location']
-                current_orders = batch['current_orders']
-                max_orders = batch['max_orders']
-                fee = batch['delivery_fee']
-                
-                batch_time = datetime.fromisoformat(str(batch['batch_time'])) if isinstance(batch['batch_time'], str) else batch['batch_time']
-                batch_time_str = batch_time.strftime("%I:%M %p")
-                
-                html_response += f"<li><strong>{restaurant}</strong> ({location}, {batch_time_str}) - ${fee:.2f} delivery fee, {current_orders}/{max_orders} spots filled</li>"
-            html_response += "</ol>"
-            html_response += "<p>To order, text 'ORDER' followed by what you want. Don't see a restaurant you want? Call (708) 901-1754 to order.</p>"
-            html_response += "<p>Text 'PAY' when you're ready to pay.</p>"
+            html_response += f"<li><strong>{restaurant}</strong> ({location}, {batch_time_str}) - ${fee:.2f} delivery fee, {current_orders}/{max_orders} spots filled</li>"
+        html_response += "</ol>"
+        html_response += "<p>To order, text 'ORDER' followed by what you want. Don't see a restaurant you want? Call (708) 901-1754 to order.</p>"
+        html_response += "<p>Text 'PAY' when you're ready to pay.</p>"
     
     elif first_word == 'order':
         # Process a free-form order
@@ -2995,23 +2747,6 @@ Your pickup window: {batch_time_str}-{batch_time_str[:-3]}:03{batch_time_str[-3:
                     except Exception as e:
                         logger.error(f"Error sending admin payment notification: {e}")
                 
-                # Update the active_sessions but preserve location
-                if phone_number and phone_number in active_sessions:
-                    # Save location data
-                    last_lat = active_sessions[phone_number].get('last_latitude')
-                    last_lng = active_sessions[phone_number].get('last_longitude')
-                    
-                    # Clear order-specific data
-                    active_sessions[phone_number] = {
-                        'conversation_history': active_sessions[phone_number].get('conversation_history', []),
-                        'user_id': active_sessions[phone_number].get('user_id')
-                    }
-                    
-                    # Restore location
-                    if last_lat and last_lng:
-                        active_sessions[phone_number]['last_latitude'] = last_lat
-                        active_sessions[phone_number]['last_longitude'] = last_lng
-                
             except Exception as e:
                 logger.error(f"Error recording payment: {e}")
     
@@ -3049,446 +2784,6 @@ def serve_privacy_policy_simple():
         }), 404
     except Exception as e:
         return f"Error: {str(e)}", 500
-
-
-
-# First, let's enhance the update_session_location function to track when a location was shared
-def update_session_location(phone_number, latitude, longitude, send_followup=True):
-    """
-    Update location in session storage and set flag for follow-up message
-    
-    Parameters:
-    - phone_number: User's phone number
-    - latitude: Location latitude
-    - longitude: Location longitude
-    - send_followup: Boolean indicating if a follow-up message should be sent
-    """
-    current_time = datetime.now()
-    
-    if phone_number in active_sessions:
-        active_sessions[phone_number]['last_latitude'] = latitude
-        active_sessions[phone_number]['last_longitude'] = longitude
-        active_sessions[phone_number]['location_timestamp'] = current_time
-        active_sessions[phone_number]['send_location_followup'] = send_followup
-    else:
-        active_sessions[phone_number] = {
-            'last_latitude': latitude,
-            'last_longitude': longitude,
-            'location_timestamp': current_time,
-            'send_location_followup': send_followup
-        }
-    logger.info(f"Updated session location for {phone_number}, follow-up flag: {send_followup}")
-
-# Next, modify the /api/update-location endpoint to send a follow-up message after location is shared
-@app.route('/api/update-location', methods=['POST'])
-def update_location():
-    """Store user location in the database and send follow-up message with restaurants"""
-    data = request.json
-    phone_number = data.get('phone_number')
-    location = data.get('location')
-    
-    if not phone_number or not location:
-        return jsonify({"error": "Phone number and location are required"}), 400
-    
-    # Clean the phone number
-    clean_phone = ''.join(filter(str.isdigit, phone_number))
-    
-    # Extract location data
-    latitude = location.get('latitude')
-    longitude = location.get('longitude')
-    accuracy = location.get('accuracy', 0)
-    timestamp = location.get('timestamp', datetime.now().isoformat())
-    
-    if not latitude or not longitude:
-        return jsonify({"error": "Latitude and longitude are required"}), 400
-    
-    try:
-        # Update database schema if needed
-        update_location_schema()
-        
-        # Update both database and session
-        update_session_location(clean_phone, latitude, longitude, send_followup=True)
-        
-        conn = sqlite3.connect('treehouse.db')
-        c = conn.cursor()
-        
-        # Check if user exists
-        c.execute("SELECT id FROM users WHERE phone_number = ?", (clean_phone,))
-        user = c.fetchone()
-        
-        if user:
-            user_id = user[0]
-            # Update user location
-            c.execute("""
-                UPDATE users 
-                SET last_latitude = ?, last_longitude = ?, location_accuracy = ?, location_updated = ?
-                WHERE id = ?
-            """, (latitude, longitude, accuracy, timestamp, user_id))
-        else:
-            # Create a new user if not exists
-            c.execute("""
-                INSERT INTO users (phone_number, last_latitude, last_longitude, location_accuracy, location_updated)
-                VALUES (?, ?, ?, ?, ?)
-            """, (clean_phone, latitude, longitude, accuracy, timestamp))
-            user_id = c.lastrowid
-        
-        conn.commit()
-        
-        # Find nearby pickup locations
-        nearby_locations = find_nearby_pickup_locations(latitude, longitude)
-        
-        # Get batches relevant to the user's location
-        nearby_batches = get_location_based_batches(latitude, longitude)
-        
-        # Send follow-up message with restaurant information
-        if twilio_client:
-            try:
-                # Format a message with all hotspot restaurants and their deals
-                follow_up_message = format_restaurant_deals(nearby_batches)
-                
-                # Send the message
-                twilio_client.messages.create(
-                    body=follow_up_message,
-                    from_=twilio_phone,
-                    to=f"+{clean_phone}"
-                )
-                logger.info(f"Sent restaurant deals follow-up message to +{clean_phone}")
-                
-                # Mark that we've sent the follow-up message
-                if clean_phone in active_sessions:
-                    active_sessions[clean_phone]['sent_location_followup'] = True
-            except Exception as e:
-                logger.error(f"Error sending follow-up message: {e}")
-        
-        conn.close()
-        
-        return jsonify({
-            "success": True,
-            "user_id": user_id,
-            "nearby_locations": nearby_locations,
-            "nearby_batches": nearby_batches,
-            "follow_up_sent": True
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Database error updating location: {e}")
-        return jsonify({"error": str(e)}), 500
-
-# Create a function to format a comprehensive message about restaurant deals
-def format_restaurant_deals(batches):
-    """
-    Format a message with all hotspot restaurants and their free item deals
-    
-    Parameters:
-    - batches: List of batch data with restaurant information
-    
-    Returns:
-    - Formatted message string
-    """
-    if not batches:
-        return "No restaurant deals available at this time. Text MENU to see when our next batch opens!"
-    
-    # Get the batch time from the first batch
-    batch_time = datetime.fromisoformat(str(batches[0]['batch_time'])) if isinstance(batches[0]['batch_time'], str) else batches[0]['batch_time']
-    batch_time_str = batch_time.strftime("%I:%M %p")
-    
-    # Calculate when to order by (X:25)
-    order_by_time = batch_time - timedelta(minutes=5)
-    order_by_str = order_by_time.strftime("%I:%M %p")
-    
-    # Format a comprehensive response that focuses on the deals
-    response = f"Thanks for sharing your location! Here are the restaurants available near you (Order by {order_by_str}):\n\n"
-    
-    # Group by restaurants to focus on the free items
-    restaurant_deals = {}
-    
-    for batch in batches:
-        restaurant = batch['restaurant_name']
-        location = batch['location']
-        fee = batch['delivery_fee']
-        free_item = batch.get('free_item', 'Free item')
-        
-        if restaurant not in restaurant_deals:
-            restaurant_deals[restaurant] = {
-                'fee': fee,
-                'free_item': free_item,
-                'locations': [location]
-            }
-        elif location not in restaurant_deals[restaurant]['locations']:
-            restaurant_deals[restaurant]['locations'].append(location)
-    
-    # Format each restaurant deal
-    for restaurant, details in restaurant_deals.items():
-        locations_str = ", ".join(details['locations'])
-        response += f"• {restaurant}: ${details['fee']:.2f} delivery fee\n"
-        response += f"  FREE DEAL: {details['free_item']}\n"
-        response += f"  Pickup at: {locations_str}\n\n"
-    
-    # Add a dedicated referral section highlighting that BOTH people get free items
-    response += "🔥 REFER A FRIEND BONUS 🔥\n"
-    response += "When you AND your friend order from the same restaurant in the same batch, BOTH of you get the free item!\n\n"
-    
-    response += f"Text ORDER followed by what you want from any of these restaurants.\n"
-    response += f"Example: ORDER a burrito bowl from Chipotle\n\n"
-    response += f"Text MENU anytime to see current batches and deals!"
-    
-    return response
-
-def update_location_schema():
-    """Add location tracking fields to the database if they don't exist"""
-    conn = sqlite3.connect('treehouse.db')
-    c = conn.cursor()
-    
-    # Check if users table has the location columns
-    c.execute("PRAGMA table_info(users)")
-    columns = [column[1] for column in c.fetchall()]
-    
-    # Add location columns if they don't exist
-    if 'last_latitude' not in columns:
-        c.execute("ALTER TABLE users ADD COLUMN last_latitude REAL")
-        logger.info("Added last_latitude column to users table")
-    
-    if 'last_longitude' not in columns:
-        c.execute("ALTER TABLE users ADD COLUMN last_longitude REAL")
-        logger.info("Added last_longitude column to users table")
-    
-    if 'location_accuracy' not in columns:
-        c.execute("ALTER TABLE users ADD COLUMN location_accuracy REAL")
-        logger.info("Added location_accuracy column to users table")
-    
-    if 'location_updated' not in columns:
-        c.execute("ALTER TABLE users ADD COLUMN location_updated TIMESTAMP")
-        logger.info("Added location_updated column to users table")
-    
-    # Add a pickup_locations table if it doesn't exist
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS pickup_locations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            address TEXT,
-            latitude REAL NOT NULL,
-            longitude REAL NOT NULL,
-            is_building BOOLEAN DEFAULT 1,
-            is_dorm BOOLEAN DEFAULT 0,
-            is_active BOOLEAN DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    conn.commit()
-    conn.close()
-    logger.info("Database schema updated for location tracking")
-
-def find_nearby_pickup_locations(latitude, longitude, max_distance_km=2.0):
-    """Find pickup locations near the given coordinates"""
-    conn = sqlite3.connect('treehouse.db')
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    
-    # Check if pickup_locations table exists and has data
-    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pickup_locations'")
-    if not c.fetchone():
-        # Create sample pickup locations
-        create_sample_pickup_locations()
-    
-    c.execute("SELECT COUNT(*) FROM pickup_locations")
-    if c.fetchone()[0] == 0:
-        # Create sample pickup locations if table is empty
-        create_sample_pickup_locations()
-    
-    # Get all pickup locations
-    c.execute("SELECT * FROM pickup_locations WHERE is_active = 1")
-    all_locations = [dict(row) for row in c.fetchall()]
-    
-    # Calculate distance for each location
-    nearby = []
-    for location in all_locations:
-        distance = calculate_distance(
-            latitude, longitude, 
-            location['latitude'], location['longitude']
-        )
-        
-        if distance <= max_distance_km:
-            location['distance_km'] = round(distance, 2)
-            nearby.append(location)
-    
-    # Sort by distance
-    nearby.sort(key=lambda x: x['distance_km'])
-    
-    conn.close()
-    return nearby
-
-def calculate_distance(lat1, lon1, lat2, lon2):
-    """Calculate distance between two points in kilometers using the Haversine formula"""
-    # Radius of the Earth in kilometers
-    R = 6371.0
-    
-    # Convert coordinates from degrees to radians
-    lat1_rad = math.radians(lat1)
-    lon1_rad = math.radians(lon1)
-    lat2_rad = math.radians(lat2)
-    lon2_rad = math.radians(lon2)
-    
-    # Differences
-    dlon = lon2_rad - lon1_rad
-    dlat = lat2_rad - lat1_rad
-    
-    # Haversine formula
-    a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    distance = R * c
-    
-    return distance
-
-def create_sample_pickup_locations():
-    """Create sample pickup locations for testing"""
-    conn = sqlite3.connect('treehouse.db')
-    c = conn.cursor()
-    
-    # Sample locations (replace with real campus locations)
-    sample_locations = [
-        ("Student Center", "750 S Halsted St", 41.8715, -87.6492, 1, 0),
-        ("James Stukel Tower", "718 W Rochford St", 41.8694, -87.6479, 0, 1),
-        ("University Hall", "601 S Morgan St", 41.8724, -87.6496, 1, 0),
-        ("UIC Library", "801 S Morgan St", 41.8721, -87.6509, 1, 0),
-        ("Thomas Beckham Hall", "1250 S Halsted St", 41.8662, -87.6467, 0, 1),
-        ("Marie Robinson Hall", "811 W Maxwell St", 41.8647, -87.6482, 0, 1),
-        ("Academic and Residential Complex", "940 W Harrison St", 41.8729, -87.6502, 0, 1),
-        ("Courtyard Café", "900 S Ashland Ave", 41.8699, -87.6631, 1, 0),
-        ("Student Recreation Facility", "737 S Halsted St", 41.8717, -87.6477, 1, 0),
-        ("Science and Engineering South", "845 W Taylor St", 41.8700, -87.6505, 1, 0)
-    ]
-    
-    # Insert sample locations
-    for location in sample_locations:
-        c.execute("""
-            INSERT INTO pickup_locations 
-            (name, address, latitude, longitude, is_building, is_dorm) 
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, location)
-    
-    conn.commit()
-    conn.close()
-    logger.info("Sample pickup locations created")
-
-def get_location_based_batches(latitude, longitude, max_distance_km=2.0):
-    """Get current batches relevant to the user's location"""
-    now = datetime.now()
-    conn = sqlite3.connect('treehouse.db')
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    
-    # Get all active batches
-    c.execute("""
-        SELECT bt.*, pl.latitude, pl.longitude, pl.name as location_name
-        FROM batch_tracking bt
-        LEFT JOIN pickup_locations pl ON bt.location = pl.name
-        WHERE bt.batch_time > ?
-        ORDER BY bt.batch_time ASC
-    """, (now,))
-    
-    all_batches = [dict(row) for row in c.fetchall()]
-    
-    # For batches without location coordinates (old data), assign default coordinates
-    for batch in all_batches:
-        if batch['latitude'] is None or batch['longitude'] is None:
-            # Try to find the location by name
-            c.execute("""
-                SELECT latitude, longitude FROM pickup_locations
-                WHERE name = ? AND is_active = 1
-            """, (batch['location'],))
-            
-            location = c.fetchone()
-            if location:
-                batch['latitude'] = location['latitude']
-                batch['longitude'] = location['longitude']
-            else:
-                # Default coordinates for UIC campus center if location not found
-                batch['latitude'] = 41.8708
-                batch['longitude'] = -87.6505
-    
-    # Calculate distance for each batch and filter by proximity
-    nearby_batches = []
-    for batch in all_batches:
-        distance = calculate_distance(
-            latitude, longitude, 
-            batch['latitude'], batch['longitude']
-        )
-        
-        batch['distance_km'] = round(distance, 2)
-        
-        # Add nearby free item information
-        for restaurant in hot_restaurants:
-            if restaurant['name'] == batch['restaurant_name']:
-                batch['free_item'] = restaurant['freeItem']
-                break
-        else:
-            batch['free_item'] = "Free item"  # Default if not found
-        
-        # Accept all batches but mark which ones are nearby
-        batch['is_nearby'] = distance <= max_distance_km
-        nearby_batches.append(batch)
-    
-    # Sort by proximity and time
-    nearby_batches.sort(key=lambda x: (not x['is_nearby'], batch['batch_time']))
-    
-    conn.close()
-    return nearby_batches
-
-@app.route('/l', methods=['GET'])
-def location_redirect():
-    """Handle location deep links"""
-    latitude = request.args.get('lat')
-    longitude = request.args.get('lng')
-    message = request.args.get('m', 'Check out restaurants near you')
-    
-    if not latitude or not longitude:
-        # Redirect to homepage if no location
-        return redirect('/')
-    
-    # Store location in session
-    session['latitude'] = latitude
-    session['longitude'] = longitude
-    
-    # Create a flash message
-    flash(message)
-    
-    # Redirect to menu page with location parameters
-    return redirect(f'/menu?lat={latitude}&lng={longitude}')
-
-@app.route('/api/menu-by-location', methods=['GET'])
-def get_menu_by_location():
-    """Get menus and batches based on location"""
-    latitude = request.args.get('latitude')
-    longitude = request.args.get('longitude')
-    
-    if not latitude or not longitude:
-        return jsonify({"error": "Latitude and longitude are required"}), 400
-    
-    try:
-        # Convert to float
-        lat = float(latitude)
-        lng = float(longitude)
-        
-        # Get nearby pickup locations
-        nearby_locations = find_nearby_pickup_locations(lat, lng)
-        
-        # Get nearby batches
-        nearby_batches = get_location_based_batches(lat, lng)
-        
-        # Get menus (use existing function)
-        menus = get_menus().get_json().get('menus', [])
-        
-        return jsonify({
-            "nearby_locations": nearby_locations,
-            "nearby_batches": nearby_batches,
-            "menus": menus
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error getting location-based menu: {e}")
-        return jsonify({"error": str(e)}), 500
-
 
 @app.route('/')
 def serve_react_app():
