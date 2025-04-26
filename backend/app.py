@@ -1290,6 +1290,56 @@ def ai_process_order(order_text, phone_number):
             None
         )
     
+    # Check if location information is included in the order
+    has_location = False
+    location_keywords = ["at", "in", "building", "dorm", "hall", "apartment", "room", "floor", 
+                         "library", "center", "quad", "commons", "lounge", "tower"]
+    
+    # First check if the user already has location info in their profile
+    conn = sqlite3.connect('treehouse.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    
+    c.execute("SELECT dorm_building, room_number FROM users WHERE phone_number = ?", (phone_number,))
+    user_info = c.fetchone()
+    conn.close()
+    
+    if user_info and user_info['dorm_building']:
+        # User already has location info saved
+        has_location = True
+    else:
+        # Check if location is mentioned in the order text
+        for keyword in location_keywords:
+            if keyword in order_text.lower():
+                has_location = True
+                break
+    
+    # If no location is found, ask for it
+    if not has_location:
+        return (
+            f"Thanks for your {restaurant_name} order! Just one more thing - please tell me which building or dorm you're in, "
+            f"including room number if applicable. This helps us deliver to the right place.\n\n"
+            f"Reply with your location info to complete your order. For example: 'I'm in University Hall room 304'",
+            restaurant_name,
+            None
+        )
+    
+    # If we get here, either there's location in the order or in the user profile
+    # Extract location from order text if present (this could be enhanced with AI later)
+    location_info = None
+    if has_location and not (user_info and user_info['dorm_building']):
+        # Simple location extraction - this could be enhanced with more sophisticated NLP
+        location_parts = []
+        words = order_text.split()
+        for i, word in enumerate(words):
+            if word.lower() in location_keywords and i < len(words) - 1:
+                # Include the word after the location keyword and up to 5 more words
+                location_parts = words[i:min(i+7, len(words))]
+                break
+        
+        if location_parts:
+            location_info = " ".join(location_parts)
+    
     # Get active batch for this restaurant
     now = datetime.now()
     conn = sqlite3.connect('treehouse.db')
@@ -1367,6 +1417,11 @@ def ai_process_order(order_text, phone_number):
     
     batch = dict(updated_row)
     
+    # If we extracted location info, save it to the user profile
+    if location_info:
+        c.execute("UPDATE users SET dorm_building = ? WHERE phone_number = ?", (location_info, phone_number))
+        conn.commit()
+    
     # Get free item info
     free_item = None
     for restaurant in hot_restaurants:
@@ -1392,10 +1447,14 @@ def ai_process_order(order_text, phone_number):
             'batch_time': batch_time,
             'started_at': now
         }
+        if location_info:
+            active_sessions[phone_number]['location'] = location_info
     else:
         active_sessions[phone_number]['restaurant'] = restaurant_name
         active_sessions[phone_number]['order_text'] = processed_order
         active_sessions[phone_number]['batch_time'] = batch_time
+        if location_info:
+            active_sessions[phone_number]['location'] = location_info
     
     # Check if user is in the database
     c.execute("SELECT id FROM users WHERE phone_number = ?", (phone_number,))
@@ -1411,6 +1470,15 @@ def ai_process_order(order_text, phone_number):
         
     # Store user_id in session
     active_sessions[phone_number]['user_id'] = user_id
+    
+    # Get current user location info for the response
+    c.execute("SELECT dorm_building, room_number FROM users WHERE phone_number = ?", (phone_number,))
+    user_location = c.fetchone()
+    location_text = ""
+    if user_location and user_location['dorm_building']:
+        location_text = f" to {user_location['dorm_building']}"
+        if user_location['room_number']:
+            location_text += f" room {user_location['room_number']}"
     
     conn.close()
     
@@ -1433,7 +1501,7 @@ def ai_process_order(order_text, phone_number):
     response = (
         f"Got your {restaurant_name} order! You've joined the {batch['location']} batch "
         f"({batch['current_orders']}/{batch['max_orders']} orders).\n\n"
-        f"Pickup at {batch_time_str}.\n"
+        f"Pickup at {batch_time_str}{location_text}.\n"
         f"Check {website} for your meal price.\n\n"
         f"Text 'PAY' to get your payment link (enter food cost + ${batch['delivery_fee']:.2f} delivery fee).\n\n"
         f"Share this text and you both get {free_item}: \"Join me for {restaurant_name}! "
