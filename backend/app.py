@@ -1277,7 +1277,7 @@ def format_batch_info(batches):
 def ai_process_order(order_text, phone_number):
     """
     Process an order request using AI
-    Returns a tuple of (processed_text, restaurant_name, batch_info)
+    Returns a tuple of (processed_text, restaurant_name, batch_info, is_complete_order)
     """
     # Extract restaurant from order text
     restaurant_name, processed_order = extract_restaurant_from_order(order_text)
@@ -1287,7 +1287,19 @@ def ai_process_order(order_text, phone_number):
             "I couldn't determine which restaurant you want to order from. "
             "Please specify a restaurant in your order, like 'ORDER a burrito from Chipotle'.",
             None,
-            None
+            None,
+            False
+        )
+    
+    # Check if the order text is too generic (just mentioning restaurant name with no specific items)
+    words = order_text.split()
+    if len(words) < 4 or restaurant_name.lower() in order_text.lower() and len(order_text) < len(restaurant_name) + 10:
+        return (
+            f"I see you want to order from {restaurant_name}! Please tell me what specific items you want to order. "
+            f"For example: 'ORDER a chicken sandwich with fries from {restaurant_name}' or 'ORDER 2 spicy chicken sandwiches from {restaurant_name}'.",
+            restaurant_name,
+            None,
+            False
         )
     
     # Check if location information is included in the order
@@ -1321,7 +1333,8 @@ def ai_process_order(order_text, phone_number):
             f"including room number if applicable. This helps us deliver to the right place.\n\n"
             f"Reply with your location info to complete your order. For example: 'I'm in University Hall room 304'",
             restaurant_name,
-            None
+            None,
+            False
         )
     
     # If we get here, either there's location in the order or in the user profile
@@ -1375,7 +1388,8 @@ def ai_process_order(order_text, phone_number):
                 f"I couldn't find an active batch for {restaurant_name}. "
                 "Please try ordering from another restaurant or text MENU to see available options.",
                 None,
-                None
+                None,
+                False
             )
     
     # Convert to dictionary for easier handling
@@ -1388,7 +1402,8 @@ def ai_process_order(order_text, phone_number):
             f"The current batch for {restaurant_name} is full. "
             "Please try ordering from another restaurant or wait for the next batch.",
             None,
-            None
+            None,
+            False
         )
     
     # Update batch count
@@ -1412,7 +1427,8 @@ def ai_process_order(order_text, phone_number):
         return (
             f"There was an error updating the batch for {restaurant_name}. Please try again.",
             None,
-            None
+            None,
+            False
         )
     
     batch = dict(updated_row)
@@ -1508,7 +1524,7 @@ def ai_process_order(order_text, phone_number):
         f"Text (708) 901-1754 to order with TreeHouse and save 90% on delivery!\""
     )
     
-    return response, restaurant_name, batch
+    return response, restaurant_name, batch, True
 
 
 # Updated menu detection function
@@ -1687,7 +1703,7 @@ def sms_webhook():
             order_text = incoming_message[6:].strip()
             
             # Process the order with AI
-            ai_response, restaurant_name, batch_info = ai_process_order(order_text, clean_phone)
+            ai_response, restaurant_name, batch_info, is_complete_order = ai_process_order(order_text, clean_phone)
             
             # Save the order in the session
             if clean_phone not in active_sessions:
@@ -1708,8 +1724,8 @@ def sms_webhook():
                 if batch_info:
                     active_sessions[clean_phone]['batch_info'] = batch_info
             
-            # Send notification to admin
-            if twilio_client and restaurant_name:
+            # Send notification to admin ONLY for complete orders
+            if twilio_client and restaurant_name and is_complete_order:
                 try:
                     # Get user details if available
                     c.execute("SELECT name, dorm_building, room_number FROM users WHERE id = ?", (user_id,))
@@ -1721,7 +1737,7 @@ def sms_webhook():
                     # Build the notification
                     admin_note = f"NEW TEXT ORDER RECEIVED!\n\n"
                     admin_note += f"Customer: {user_name} ({from_number})\n"
-                    admin_note += f"Location: {dorm}, Room {room}\n\n"
+                    admin_note += f"LOCATION: {dorm}, Room {room}\n\n"  # Make location stand out
                     admin_note += f"Restaurant: {restaurant_name}\n"
                     admin_note += f"Order: {order_text}\n\n"
                     admin_note += "Customer will need to text 'PAY' to receive payment link."
@@ -1737,14 +1753,14 @@ def sms_webhook():
             
             # Set the response
             response = ai_response
-        
-        # Update conversation history
-        user_history.append({'role': 'user', 'content': incoming_message})
-        user_history.append({'role': 'assistant', 'content': response})
-        active_sessions[clean_phone]['conversation_history'] = user_history
-        
-        resp.message(response)
-        logger.info(f"Processed order request from {from_number} using TwiML")
+            
+            # Update conversation history
+            user_history.append({'role': 'user', 'content': incoming_message})
+            user_history.append({'role': 'assistant', 'content': response})
+            active_sessions[clean_phone]['conversation_history'] = user_history
+            
+            resp.message(response)
+            logger.info(f"Processed order request from {from_number} using TwiML")
         
     elif first_word == 'pay':
         # Check if they have an active order
@@ -1964,7 +1980,6 @@ def sms_webhook():
             
             CURRENT HOT RESTAURANTS:
             {hot_restaurants_info}
-            
             KEY GUIDELINES:
             1. Be conversational, helpful, and natural - respond like a human assistant would.
             2. Infer user intent intelligently - understand what they're asking for beyond literal commands.
