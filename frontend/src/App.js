@@ -3,7 +3,7 @@ import './App.css';
 import TextOrderingSection from './TextOrderingSection';
 import Logo from './Logo';
 import frontpageImage from './assets/frontpage.jpg';
-import HotSpotSection from './HotSpotSection';
+{/* import HotSpotSection from './HotSpotSection'; */}
 
 function App() {
   // State for user phone number input
@@ -126,9 +126,9 @@ function App() {
             <h3 style={{fontSize: '24px', marginBottom: '20px', fontWeight: 'normal'}}>No hidden fees, ever.</h3>
             
             <p style={{marginBottom: '15px'}}>Enter your phone number once to sign up AND order - everything happens by text!</p>
-            <p style={{marginBottom: '15px', fontWeight: 'bold'}}>Pickup from an RA dorm host on your floor or a neighboring floor.</p>
-            <p style={{marginBottom: '15px'}}>You <span style={{fontWeight: 'bold'}}>have to order exactly at the 25-30 minute mark</span> of each hour to get your food at the top of the next hour. We deliver daily from 11am to 10pm.</p>
-            <p style={{marginBottom: '25px'}}><span style={{fontWeight: 'bold'}}>Example:</span> Order at 5:25pm, pickup your food from your dorm host at 6:00pm.</p>
+            <p style={{marginBottom: '15px', fontWeight: 'bold'}}>If your in a building on campus pick up from the main entrance area. If your in a dorm pickup at the main entrance or an RA dorm host.</p>
+            <p style={{marginBottom: '15px'}}>You <span style={{fontWeight: 'bold'}}>have to order exactly at the 25-30 minute mark or the top of the hour</span> of each hour to get your food at the top of the next hour. We deliver daily from 11am to 10pm.</p>
+            <p style={{marginBottom: '25px'}}><span style={{fontWeight: 'bold'}}>Example:</span> Order at 5:25pm, pickup your food from your dorm host at 6:00pm.Or order at 7:00pm, pickup your food at 7:30pm.</p>
             
             <div style={{display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px'}}>
               {/* SMS Consent Checkbox - Above phone number field */}
@@ -204,7 +204,7 @@ function App() {
         </section>
         
         {/* Add the HotSpotSection component here */}
-        <HotSpotSection />
+        {/* <HotSpotSection /> */}
         
         {/* Add the TextOrderingSection component here */}
         <TextOrderingSection />
