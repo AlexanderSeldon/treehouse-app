@@ -118,9 +118,7 @@ function App() {
       <main style={{padding: '20px', paddingTop: '150px', maxWidth: '1200px', margin: '0 auto'}}>
         <section style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '40px', marginBottom: '50px'}}>
           <div>
-            <div style={{display: 'inline-flex', alignItems: 'center', backgroundColor: '#1B4332', color: 'white', fontWeight: 'bold', padding: '10px 15px', borderRadius: '8px', marginBottom: '20px'}}>
-              ✓ FIRST-TIME ORDERS: PAY AFTER YOU GET YOUR FOOD!
-            </div>
+            
             
             <h2 style={{fontSize: '32px', marginBottom: '10px'}}>Restaurant Delivery for ONLY $2-4</h2>
             <h3 style={{fontSize: '24px', marginBottom: '20px', fontWeight: 'normal'}}>No hidden fees, ever.</h3>
@@ -230,13 +228,11 @@ function App() {
               </div>
               
               <div>
-                <h3 style={{fontSize: '22px', color: '#1B4332', marginBottom: '10px'}}>3. Pick up from a host in your dorm</h3>
-                <p>A TreeHouse host in your building will have your food at their dorm room/unit. All orders are sealed by us before delivery.</p>
+                <h3 style={{fontSize: '22px', color: '#1B4332', marginBottom: '10px'}}>3. Pick up from the main entrance of the building or a host in your dorm</h3>
+                <p>A TreeHouse driver will have your order at the main entrance of the building. If your in a dorm an RA host or driver will have your food at the main entrance. All orders are sealed by us before delivery.</p>
               </div>
               
-              <div>
-                <h3 style={{fontSize: '22px', color: '#1B4332'}}>First time ordering? You don't pay until we hand you your food!</h3>
-              </div>
+              
             </div>
           </div>
         </section>
