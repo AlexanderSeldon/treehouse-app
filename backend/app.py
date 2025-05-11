@@ -1171,6 +1171,7 @@ def ai_generate_response(prompt, user_history=None):
                 hot_restaurants_info += f"- {restaurant} at {location}: ${fee:.2f} delivery fee, {current_orders}/{max_orders} orders, Share & get {free_item}\n"
         
         # Enhanced system prompt that makes the AI more helpful and contextually aware
+        # With stronger guidance on following the proper order flow
         system_prompt = f"""
         You are TreeHouse's friendly food delivery assistant, helping college students order food with a low $2-4 delivery fee.
         
@@ -1184,6 +1185,15 @@ def ai_generate_response(prompt, user_history=None):
         1. Be conversational, helpful, and natural - respond like a human assistant would.
         2. Infer user intent intelligently - understand what they're asking for beyond literal commands.
         3. When in doubt, be helpful rather than redirecting to commands.
+        
+        STRICT ORDER FLOW - ALWAYS FOLLOW THIS SEQUENCE:
+        1. First, always show available restaurants and current deals when a user asks about options
+        2. Then help them place an order with a specific restaurant
+        3. Next ask for their location if not provided
+        4. Finally instruct them to text PAY to complete their order
+        
+        NEVER SKIP STEPS in this flow. If a user asks about restaurant options, ALWAYS show the current deals
+        before taking their order. NEVER proceed with an order unless you've first shown the menu options.
         
         UNDERSTAND ALL COMMANDS:
         - MENU or ??: Shows available restaurants
@@ -1200,6 +1210,7 @@ def ai_generate_response(prompt, user_history=None):
         - Always include the time remaining for the current batch or when the next batch starts.
         - Always mention that sharing with friends gets them both free items.
         - Focus on the $2-4 delivery fee as a key selling point compared to competitors charging $14-18.
+        - When a user provides ONLY a location (e.g., "University Hall"), recognize it as their location response.
         
         ABOUT TREEHOUSE:
         - We have 5 rotating restaurants every 30 minutes with guaranteed delivery fees from $2-4 dollars
@@ -1214,6 +1225,30 @@ def ai_generate_response(prompt, user_history=None):
         
         Your tone is friendly, helpful, and efficient - you want to make ordering food as easy as possible for college students!
         """
+        
+        # Check conversation context to improve awareness of where we are in the ordering flow
+        conversation_context = ""
+        if user_history:
+            # Analyze recent conversation to determine context
+            recent_messages = user_history[-4:]  # Last 2 exchanges
+            awaiting_location = False
+            showed_menu = False
+            
+            for entry in recent_messages:
+                if entry['role'] == 'assistant' and "Just one more thing - please tell me which building or dorm you're in" in entry['content']:
+                    awaiting_location = True
+                if entry['role'] == 'assistant' and "TreeHouse Options" in entry['content']:
+                    showed_menu = True
+            
+            if awaiting_location:
+                conversation_context += "USER CONTEXT: The user was recently asked for their location. If they respond with just a location name like 'University Hall' or a building name, interpret this as their location response.\n"
+            
+            if showed_menu:
+                conversation_context += "USER CONTEXT: The user was recently shown the restaurant menu options. You can now help them place an order.\n"
+        
+        # Add the context to the system prompt
+        if conversation_context:
+            system_prompt += "\n" + conversation_context
         
         # Prepare conversation history if provided
         messages = [{"role": "system", "content": system_prompt}]
@@ -1279,6 +1314,70 @@ def ai_process_order(order_text, phone_number):
     Process an order request using AI
     Returns a tuple of (processed_text, restaurant_name, batch_info, is_complete_order)
     """
+    # Check if this is just a location response (no restaurant name detection needed)
+    # This handles replies to previous location requests
+    if phone_number in active_sessions and active_sessions[phone_number].get('awaiting_location', False):
+        # This is likely a location-only response
+        location_info = order_text.strip()
+        restaurant_name = active_sessions[phone_number].get('restaurant')
+        
+        # Save the location to the user profile
+        conn = sqlite3.connect('treehouse.db')
+        c = conn.cursor()
+        c.execute("UPDATE users SET dorm_building = ? WHERE phone_number = ?", (location_info, phone_number))
+        conn.commit()
+        
+        # Get the batch info that was previously stored
+        batch = active_sessions[phone_number].get('batch_info')
+        if not batch:
+            # Retrieve batch info for the restaurant
+            now = datetime.now()
+            c.execute("""
+                SELECT * FROM batch_tracking 
+                WHERE restaurant_name = ? AND batch_time > ? 
+                ORDER BY batch_time ASC 
+                LIMIT 1
+            """, (restaurant_name, now))
+            
+            batch_row = c.fetchone()
+            if batch_row:
+                batch = dict(batch_row)
+        
+        # Clear the awaiting_location flag
+        active_sessions[phone_number]['awaiting_location'] = False
+        active_sessions[phone_number]['location'] = location_info
+        
+        # Create response with location acknowledgment
+        batch_time = datetime.fromisoformat(str(batch['batch_time'])) if isinstance(batch['batch_time'], str) else batch['batch_time']
+        batch_time_str = batch_time.strftime("%I:%M %p")
+        
+        # Get free item info
+        free_item = None
+        for restaurant in hot_restaurants:
+            if restaurant['name'] == restaurant_name:
+                free_item = restaurant['freeItem']
+                break
+        
+        if not free_item:
+            for restaurant in other_restaurants:
+                if restaurant['name'] == restaurant_name:
+                    free_item = restaurant['freeItem']
+                    break
+        
+        response = (
+            f"Thanks! Your {restaurant_name} order will be delivered to {location_info}. "
+            f"You've joined the {batch['location']} batch "
+            f"({batch['current_orders']}/{batch['max_orders']} orders).\n\n"
+            f"Pickup at {batch_time_str}.\n"
+            f"Text 'PAY' to get your payment link (enter food cost + ${batch['delivery_fee']:.2f} delivery fee).\n\n"
+            f"Share this text and you both get {free_item}: \"Join me for {restaurant_name}! "
+            f"Text (708) 901-1754 to order with TreeHouse and save 90% on delivery!\""
+        )
+        
+        conn.close()
+        return response, restaurant_name, batch, True
+    
+    # Original order processing flow
     # Extract restaurant from order text
     restaurant_name, processed_order = extract_restaurant_from_order(order_text)
     
@@ -1328,10 +1427,54 @@ def ai_process_order(order_text, phone_number):
     
     # If no location is found, ask for it
     if not has_location:
+        # Store the current order info so we can resume after getting location
+        now = datetime.now()
+        conn = sqlite3.connect('treehouse.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        
+        c.execute("""
+            SELECT * FROM batch_tracking 
+            WHERE restaurant_name = ? AND batch_time > ? 
+            ORDER BY batch_time ASC 
+            LIMIT 1
+        """, (restaurant_name, now))
+        
+        batch_row = c.fetchone()
+        
+        if not batch_row:
+            # No batch found, create one
+            init_restaurant_batches()
+            
+            # Try again
+            c.execute("""
+                SELECT * FROM batch_tracking 
+                WHERE restaurant_name = ? AND batch_time > ? 
+                ORDER BY batch_time ASC 
+                LIMIT 1
+            """, (restaurant_name, now))
+            
+            batch_row = c.fetchone()
+        
+        conn.close()
+        
+        # Add to active sessions with awaiting_location flag
+        if phone_number not in active_sessions:
+            active_sessions[phone_number] = {}
+        
+        active_sessions[phone_number]['restaurant'] = restaurant_name
+        active_sessions[phone_number]['order_text'] = processed_order
+        active_sessions[phone_number]['started_at'] = now
+        active_sessions[phone_number]['awaiting_location'] = True
+        
+        if batch_row:
+            batch = dict(batch_row)
+            active_sessions[phone_number]['batch_info'] = batch
+        
         return (
             f"Thanks for your {restaurant_name} order! Just one more thing - please tell me which building or dorm you're in, "
             f"including room number if applicable. This helps us deliver to the right place.\n\n"
-            f"Reply with your location info to complete your order. For example: 'I'm in University Hall room 304'",
+            f"Just reply with your location info to complete your order. For example: 'University Hall' or 'James Stukel Tower room 304'",
             restaurant_name,
             None,
             False
@@ -1521,7 +1664,7 @@ def ai_process_order(order_text, phone_number):
         f"Check {website} for your meal price.\n\n"
         f"Text 'PAY' to get your payment link (enter food cost + ${batch['delivery_fee']:.2f} delivery fee).\n\n"
         f"Share this text and you both get {free_item}: \"Join me for {restaurant_name}! "
-        f"Text (708) 901-1754 to order with TreeHouse and save 90% on delivery!\""
+        f"Text (844-311-8208) to order with TreeHouse and save 90% on delivery!\""
     )
     
     return response, restaurant_name, batch, True
@@ -1673,6 +1816,57 @@ def sms_webhook():
         active_sessions[clean_phone]['conversation_history'] = []
         active_sessions[clean_phone]['user_id'] = user_id
     
+    # Check if this is a location-only response to a previous question
+    if clean_phone in active_sessions and active_sessions[clean_phone].get('awaiting_location', False):
+        # This looks like a location response, process it as an order continuation
+        logger.info(f"Processing location response from {from_number}: {incoming_message}")
+        
+        # Get the stored restaurant and order
+        restaurant_name = active_sessions[clean_phone].get('restaurant')
+        order_text = active_sessions[clean_phone].get('order_text')
+        
+        if restaurant_name:
+            # Process as a continuation of the order with the location
+            ai_response, restaurant, batch_info, is_complete_order = ai_process_order(incoming_message, clean_phone)
+            
+            # Update conversation history
+            user_history.append({'role': 'user', 'content': incoming_message})
+            user_history.append({'role': 'assistant', 'content': ai_response})
+            active_sessions[clean_phone]['conversation_history'] = user_history
+            
+            resp.message(ai_response)
+            logger.info(f"Processed location response for order from {from_number} using TwiML")
+            
+            # Send admin notification if order is now complete
+            if is_complete_order and twilio_client:
+                try:
+                    # Get user details
+                    c.execute("SELECT name, dorm_building, room_number FROM users WHERE id = ?", (user_id,))
+                    user_details = c.fetchone()
+                    user_name = user_details[0] if user_details and user_details[0] else "Unknown"
+                    dorm = user_details[1] if user_details and user_details[1] else "Unknown"
+                    room = user_details[2] if user_details and user_details[2] else "Unknown"
+                    
+                    # Build notification with the location
+                    admin_note = f"⚠️ NEW ORDER WITH LOCATION! #{random.randint(1000, 9999)}\n\n"
+                    admin_note += f"Customer: {user_name} ({from_number})\n"
+                    admin_note += f"LOCATION: {dorm}, Room {room}\n\n"
+                    admin_note += f"Restaurant: {restaurant_name}\n"
+                    admin_note += f"Order: {order_text}\n\n"
+                    admin_note += "Customer will need to text 'PAY' to receive payment link."
+                    
+                    twilio_message = twilio_client.messages.create(
+                        body=admin_note,
+                        from_=twilio_phone,
+                        to=notification_email
+                    )
+                    logger.info(f"Admin notification sent for completed order with location: {twilio_message.sid}")
+                except Exception as e:
+                    logger.error(f"Error sending admin notification for location update: {e}")
+            
+            conn.close()
+            return str(resp)
+    
     # Process command based on the first word (lowercase for case insensitivity)
     first_word = incoming_message.split(' ')[0].lower()
     
@@ -1734,22 +1928,28 @@ def sms_webhook():
                     dorm = user_details[1] if user_details and user_details[1] else "Unknown"
                     room = user_details[2] if user_details and user_details[2] else "Unknown"
                     
-                    # Build the notification
-                    admin_note = f"NEW TEXT ORDER RECEIVED!\n\n"
+                    # Build the notification - Make this more visible
+                    admin_note = f"⚠️ NEW TEXT ORDER RECEIVED! #{random.randint(1000, 9999)}\n\n"
                     admin_note += f"Customer: {user_name} ({from_number})\n"
                     admin_note += f"LOCATION: {dorm}, Room {room}\n\n"  # Make location stand out
                     admin_note += f"Restaurant: {restaurant_name}\n"
                     admin_note += f"Order: {order_text}\n\n"
                     admin_note += "Customer will need to text 'PAY' to receive payment link."
                     
-                    twilio_client.messages.create(
+                    # Make sure you're using the right Twilio client and notification number
+                    twilio_message = twilio_client.messages.create(
                         body=admin_note,
                         from_=twilio_phone,
-                        to=notification_email
+                        to=notification_email  # Make sure this is your phone number in E.164 format
                     )
-                    logger.info(f"Admin notification sent for new text order from {from_number}")
+                    logger.info(f"Admin notification sent for new text order from {from_number}: {twilio_message.sid}")
                 except Exception as e:
                     logger.error(f"Error sending admin notification: {e}")
+
+                # Debug logging to help diagnose issues with admin notifications
+                logger.info(f"Variables for admin notification: twilio_client exists: {twilio_client is not None}, " + 
+                           f"restaurant_name: '{restaurant_name}', is_complete_order: {is_complete_order}, " +
+                           f"notification_email: '{notification_email}'")
             
             # Set the response
             response = ai_response
@@ -1936,118 +2136,12 @@ def sms_webhook():
         # Process general message with AI assistance
         # Check if OpenAI API is available
         if openai_api_key:
-            # Get current batch information to provide to the AI
-            batches = get_current_batches()
-            batch_time_info = ""
-            hot_restaurants_info = ""
+            # Use the improved AI response function that maintains better order flow
+            response = ai_generate_response(incoming_message, user_history)
             
-            # Format batch timing information
-            if batches and len(batches) > 0:
-                # Get the batch time from the first batch
-                batch_time = datetime.fromisoformat(str(batches[0]['batch_time'])) if isinstance(batches[0]['batch_time'], str) else batches[0]['batch_time']
-                current_time = datetime.now()
-                
-                # Calculate time remaining for the batch
-                time_diff = batch_time - current_time
-                minutes_remaining = max(0, int(time_diff.total_seconds() / 60))
-                
-                if minutes_remaining > 0:
-                    batch_time_str = batch_time.strftime("%I:%M %p")
-                    batch_time_info = f"Current batch closes in {minutes_remaining} minutes. Order by {batch_time.strftime('%I:%M %p')} to get food delivered at {(batch_time + timedelta(minutes=30)).strftime('%I:%M %p')}."
-                else:
-                    next_batch_time = batch_time + timedelta(minutes=30)
-                    batch_time_info = f"Next batch will be at {next_batch_time.strftime('%I:%M %p')}. Order between {(next_batch_time - timedelta(minutes=5)).strftime('%I:%M %p')} and {next_batch_time.strftime('%I:%M %p')}."
-            
-            # Format hot restaurants information
-            if batches and len(batches) > 0:
-                hot_restaurants_info = "Current hot restaurants:\n"
-                for batch in batches:
-                    restaurant = batch['restaurant_name']
-                    location = batch['location']
-                    current_orders = batch['current_orders']
-                    max_orders = batch['max_orders']
-                    fee = batch['delivery_fee']
-                    free_item = batch.get('free_item', 'Free item')
-                    
-                    hot_restaurants_info += f"- {restaurant} at {location}: ${fee:.2f} delivery fee, {current_orders}/{max_orders} orders, Share & get {free_item}\n"
-            
-            # Enhanced system prompt that makes the AI more helpful and contextually aware
-            system_prompt = f"""
-            You are TreeHouse's friendly food delivery assistant, helping college students order food with a low $2-4 delivery fee.
-            
-            CURRENT BATCH INFORMATION:
-            {batch_time_info}
-            
-            CURRENT HOT RESTAURANTS:
-            {hot_restaurants_info}
-            KEY GUIDELINES:
-            1. Be conversational, helpful, and natural - respond like a human assistant would.
-            2. Infer user intent intelligently - understand what they're asking for beyond literal commands.
-            3. When in doubt, be helpful rather than redirecting to commands.
-            
-            UNDERSTAND ALL COMMANDS:
-            - MENU or ??: Shows available restaurants
-            - ORDER [details]: Places an order
-            - PAY: Gets a payment link
-            - CANCEL: Cancels an order (within 10 minutes of ordering)
-            - HELP or INFO: Shows help information
-            - JOIN or START: Subscribes to messages
-            - STOP, CANCEL, UNSUBSCRIBE, END, or QUIT: Unsubscribes from messages
-            
-            IMPORTANT BEHAVIORS:
-            - If a user asks about deals, offers, or options, IMMEDIATELY show them the current hot restaurants with available free items.
-            - If a user says "yes" or affirms after you've offered information, provide that information right away.
-            - Always include the time remaining for the current batch or when the next batch starts.
-            - Always mention that sharing with friends gets them both free items.
-            - Focus on the $2-4 delivery fee as a key selling point compared to competitors charging $14-18.
-            
-            ABOUT TREEHOUSE:
-            - We have 5 rotating restaurants every 30 minutes with guaranteed delivery fees from $2-4 dollars
-            - Users can order from restaurants outside the featured 5, but delivery fees will be significantly higher
-            - Our group ordering system saves users 90% on delivery fees by batching orders together from multiple people to the same location
-            - Orders delivered hourly - users must order by :25-:30 to get food at the top of the next hour
-            - Sharing with friends gets both people free items when they join the same batch
-            - First-time orders: Users can pay after they get their food
-            - For building pickups (libraries, student centers, etc.): Food is delivered to designated pickup spots in those buildings
-            - For dorm orders: Pickup from an RA dorm host on their floor or neighboring floor
-            - We deliver daily from 11am to 10pm
-            
-            Your tone is friendly, helpful, and efficient - you want to make ordering food as easy as possible for college students!
-            """
-            
-            # Prepare messages for the API call
-            messages = [{"role": "system", "content": system_prompt}]
-            
-            # Add conversation history
-            if len(user_history) > 0:
-                for entry in user_history[-8:]:  # Last 8 messages (4 exchanges)
-                    messages.append({
-                        "role": entry["role"],
-                        "content": entry["content"]
-                    })
-            
-            # Add the current message
-            messages.append({"role": "user", "content": incoming_message})
-            
-            try:
-                # Call OpenAI API
-                client = openai.OpenAI(api_key=openai_api_key)
-                ai_response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=messages,
-                    max_tokens=300,
-                    temperature=0.7
-                )
-                
-                # Extract the AI response
-                response = ai_response.choices[0].message.content
-                
-                # Add a suggestion to use the primary commands if not mentioned
-                if not any(keyword in response.lower() for keyword in ['menu', 'order', 'pay']):
-                    response += "\n\nText 'MENU' to see restaurant options or 'ORDER' followed by what you want."
-            except Exception as e:
-                logger.error(f"Error using OpenAI for conversation: {e}")
-                response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
+            # Add a suggestion to use primary commands if not mentioned
+            if not any(keyword in response.lower() for keyword in ['menu', 'order', 'pay']):
+                response += "\n\nText 'MENU' to see restaurant options or 'ORDER' followed by what you want."
         else:
             # Fallback response without AI
             response = "I didn't understand that command. Text 'MENU' to see restaurants, 'ORDER' followed by what you want, or 'PAY' to get a payment link. Need help? Text 'HELP' or call (708) 901-1754."
