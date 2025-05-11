@@ -1162,13 +1162,12 @@ def ai_generate_response(prompt, user_history=None):
             hot_restaurants_info = "Current hot restaurants:\n"
             for batch in batches:
                 restaurant = batch['restaurant_name']
-                location = batch['location']
                 current_orders = batch['current_orders']
                 max_orders = batch['max_orders']
                 fee = batch['delivery_fee']
                 free_item = batch.get('free_item', 'Free item')
                 
-                hot_restaurants_info += f"- {restaurant} at {location}: ${fee:.2f} delivery fee, {current_orders}/{max_orders} orders, Share & get {free_item}\n"
+                hot_restaurants_info += f"- {restaurant}: ${fee:.2f} delivery fee, {current_orders}/{max_orders} orders, Share & get {free_item}\n"
         
         # Enhanced system prompt that makes the AI more helpful and contextually aware
         system_prompt = f"""
