@@ -1260,13 +1260,13 @@ def format_batch_info(batches):
     
     for batch in batches:
         restaurant = batch['restaurant_name']
-        location = batch['location']
         current_orders = batch['current_orders']
         max_orders = batch['max_orders']
         fee = batch['delivery_fee']
         free_item = batch.get('free_item', 'Free item')
         
-        response += f"- {restaurant} ({location}, {batch_time_str}) [${fee:.2f} fee, {current_orders}/{max_orders} spots] - Share & get {free_item}\n"
+        # Removed the location from this line
+        response += f"- {restaurant} ({batch_time_str}) [${fee:.2f} fee, {current_orders}/{max_orders} spots] - Share & get {free_item}\n"
     
     response += "\nText \"ORDER\" followed by what you want.\n"
     response += "Check restaurant websites for prices - not included in our system.\n"
