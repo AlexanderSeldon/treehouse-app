@@ -1339,8 +1339,10 @@ def format_batch_info(batches):
         
         response += f"- {restaurant} ({location}, {batch_time_str}) [${fee:.2f} fee, {current_orders}/{max_orders} spots] - Share & get {free_item}\n"
     
-    response += "\nText \"ORDER\" followed by what you want.\n"
-    response += "Check restaurant websites for prices - not included in our system.\n"
+    response += "\n📱 HOW TO ORDER:\n"
+    response += "1. First, place your order directly with the restaurant (via their app/website/phone) and select PICKUP (NOT DELIVERY)\n"
+    response += "2. Then text \"ORDER\" followed by the restaurant name to us\n"
+    response += "3. We'll pick up your order and deliver it to you for only $4!\n\n"
     response += "Share with a friend for you both to get free items when you order!"
     
     return response
@@ -1407,7 +1409,7 @@ def ai_process_order(order_text, phone_number):
             f"Pickup at {batch_time_str}.\n"
             f"Text 'PAY' to get your payment link (enter food cost + ${batch['delivery_fee']:.2f} delivery fee).\n\n"
             f"Share this text and you both get {free_item}: \"Join me for {restaurant_name}! "
-            f"Text (708) 901-1754 to order with TreeHouse and save 90% on delivery!\""
+            f"Text (844) 311-8208 to order with TreeHouse and save 90% on delivery!\""
         )
         
         conn.close()
