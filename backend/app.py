@@ -1339,10 +1339,11 @@ def format_batch_info(batches):
         
         response += f"- {restaurant} ({location}, {batch_time_str}) [${fee:.2f} fee, {current_orders}/{max_orders} spots] - Share & get {free_item}\n"
     
-    response += "\n📱 HOW TO ORDER:\n"
+    response += "\n📱 IMPORTANT - HOW TO ORDER:\n"
     response += "1. First, place your order directly with the restaurant (via their app/website/phone) and select PICKUP (NOT DELIVERY)\n"
     response += "2. Then text \"ORDER\" followed by the restaurant name to us\n"
-    response += "3. We'll pick up your order and deliver it to you for only $4!\n\n"
+    response += "3. We'll ask for your order number/name and pickup location\n"
+    response += "4. We'll pick up your order and deliver it to you for only $4!\n\n"
     response += "Share with a friend for you both to get free items when you order!"
     
     return response
@@ -1459,6 +1460,15 @@ def ai_process_order(order_text, phone_number):
                 None,
                 False
             )
+        # Check if they're saying "yes" they have an order number but haven't provided it
+        elif any(phrase in order_text.lower() for phrase in ["yes", "yeah", "yep", "sure", "i do"]) and len(order_text.strip()) < 10:
+            # They indicated yes but didn't provide the number
+            return (
+                f"Great! Please send me your order confirmation number from {restaurant_name} so our driver can identify your order correctly.",
+                restaurant_name,
+                None,
+                False
+            )
         else:
             # They're providing an order number
             order_number = order_text.strip()
@@ -1545,12 +1555,14 @@ def ai_process_order(order_text, phone_number):
     conn.close()
     
     return (
-        f"Great! Do you have an order confirmation number from {restaurant_name}? This helps our driver pick up your order correctly.",
+        f"Great! To order from {restaurant_name}, please follow these steps:\n\n"
+        f"1. First, place your order directly with {restaurant_name}'s app/website/phone and select PICKUP option (not delivery)\n"
+        f"2. Once you've placed your order, come back and let me know your order confirmation number\n\n"
+        f"Have you already placed your order with {restaurant_name}? If so, do you have your order confirmation number?",
         restaurant_name,
         None,
         False
     )
-
 
 # Updated menu detection function
 def is_menu_request(message):
