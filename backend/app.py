@@ -1555,14 +1555,14 @@ def ai_process_order(order_text, phone_number):
     conn.close()
     
     return (
-        f"Great! To order from {restaurant_name}, please follow these steps:\n\n"
-        f"1. First, place your order directly with {restaurant_name}'s app/website/phone and select PICKUP option (not delivery)\n"
-        f"2. Once you've placed your order, come back and let me know your order confirmation number\n\n"
-        f"Have you already placed your order with {restaurant_name}? If so, do you have your order confirmation number?",
-        restaurant_name,
-        None,
-        False
-    )
+    f"Great! To order from {restaurant_name}, please follow these steps:\n\n"
+    f"1. First, place your order directly with {restaurant_name}'s app/website/phone and select PICKUP option (not delivery)\n"
+    f"2. Once you've placed your order, come back and let me know your order confirmation number\n\n"
+    f"Have you already placed your order with {restaurant_name}? If so, do you have your order confirmation number? If you don't have an order number or if {restaurant_name} doesn't provide one, just let me know your name instead.",
+    restaurant_name,
+    None,
+    False
+)
 
 # Updated menu detection function
 def is_menu_request(message):
