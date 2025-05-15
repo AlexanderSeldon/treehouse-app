@@ -236,20 +236,31 @@ other_restaurants = [
     {"name": "Five Guys", "fee": 9.99, "freeItem": "Free small fries"}
 ]
 
-# Initialize batches for restaurants
 def init_restaurant_batches():
     now = datetime.now()
     current_hour = now.hour
     current_minute = now.minute
     
     # Find next batch time
-    next_batch_hour = current_hour
-    next_batch_minute = 30 if current_minute < 25 else 0
+    # If between XX:00-XX:15, next batch is XX:30
+    # If between XX:15-XX:30, current batch is XX:30
+    # If between XX:30-XX:45, next batch is (XX+1):00
+    # If between XX:45-XX:00, current batch is (XX+1):00
+    if 0 <= current_minute < 15:
+        next_batch_hour = current_hour
+        next_batch_minute = 30
+    elif 15 <= current_minute < 30:
+        next_batch_hour = current_hour
+        next_batch_minute = 30
+    elif 30 <= current_minute < 45:
+        next_batch_hour = current_hour + 1
+        next_batch_minute = 0
+    else:  # 45 <= current_minute < 60
+        next_batch_hour = current_hour + 1
+        next_batch_minute = 0
     
-    if next_batch_minute == 0:
-        next_batch_hour += 1
-        if next_batch_hour >= 24:
-            next_batch_hour = 0
+    if next_batch_hour >= 24:
+        next_batch_hour = 0
     
     next_batch_time = datetime(now.year, now.month, now.day, next_batch_hour, next_batch_minute)
     
@@ -960,9 +971,21 @@ def get_current_batches():
             if not next_batch:
                 # Still no batches, use dynamic data
                 next_batch_time = now + timedelta(minutes=30)
-                if next_batch_time.minute < 30:
+                
+                # Adjust to correct batch time based on 15-minute windows
+                current_minute = now.minute
+                
+                if current_minute < 15:
+                    # Next batch is at XX:30
                     next_batch_time = next_batch_time.replace(minute=30, second=0, microsecond=0)
+                elif current_minute < 30:
+                    # Current batch is at XX:30
+                    next_batch_time = next_batch_time.replace(minute=30, second=0, microsecond=0)
+                elif current_minute < 45:
+                    # Next batch is at (XX+1):00
+                    next_batch_time = next_batch_time.replace(hour=next_batch_time.hour+1, minute=0, second=0, microsecond=0)
                 else:
+                    # Current batch is at (XX+1):00
                     next_batch_time = next_batch_time.replace(hour=next_batch_time.hour+1, minute=0, second=0, microsecond=0)
                 
                 batch_data = []
@@ -1146,16 +1169,94 @@ def ai_generate_response(prompt, user_history=None):
            batch_time = datetime.fromisoformat(str(batches[0]['batch_time'])) if isinstance(batches[0]['batch_time'], str) else batches[0]['batch_time']
            current_time = datetime.now()
            
-           # Calculate time remaining for the batch
-           time_diff = batch_time - current_time
-           minutes_remaining = max(0, int(time_diff.total_seconds() / 60))
+           # Calculate when batch opens and closes
+           if batch_time.minute == 30:  # It's a XX:30 batch
+               batch_open_time = datetime(batch_time.year, batch_time.month, batch_time.day, batch_time.hour, 15, 0)
+               batch_close_time = batch_time
+               food_ready_time = batch_time + timedelta(minutes=30)  # Food ready at XX+1:00
+           else:  # It's a XX:00 batch
+               batch_open_time = datetime(batch_time.year, batch_time.month, batch_time.day, batch_time.hour-1 if batch_time.hour > 0 else 23, 45, 0)
+               batch_close_time = batch_time
+               food_ready_time = batch_time + timedelta(minutes=30)  # Food ready at XX:30
            
-           if minutes_remaining > 0:
+           # Determine if batch is currently open
+           batch_is_open = batch_open_time <= current_time < batch_close_time
+           
+           if batch_is_open:
+               # Calculate time remaining until batch closes
+               time_diff = batch_close_time - current_time
+               minutes_remaining = int(time_diff.total_seconds() / 60)
+               seconds_remaining = int(time_diff.total_seconds() % 60)
+               
                batch_time_str = batch_time.strftime("%I:%M %p")
-               batch_time_info = f"Current batch closes in {minutes_remaining} minutes. Order by {batch_time.strftime('%I:%M %p')} to get food delivered at {(batch_time + timedelta(minutes=30)).strftime('%I:%M %p')}."
+               food_time_str = food_ready_time.strftime("%I:%M %p")
+               
+               urgency = ""
+               if minutes_remaining < 5:
+                   urgency = "🚨 URGENT! "
+               
+               batch_time_info = (
+                   f"{urgency}Current batch is OPEN! Orders for the {batch_time_str} batch close in EXACTLY "
+                   f"{minutes_remaining} minutes and {seconds_remaining} seconds. "
+                   f"Complete your order by {batch_time_str} to get food at {food_time_str}. "
+                   f"Late orders will automatically be moved to the next batch."
+               )
            else:
-               next_batch_time = batch_time + timedelta(minutes=30)
-               batch_time_info = f"Next batch will be at {next_batch_time.strftime('%I:%M %p')}. Order between {(next_batch_time - timedelta(minutes=5)).strftime('%I:%M %p')} and {next_batch_time.strftime('%I:%M %p')}."
+               # Batch is not open yet - calculate time until it opens
+               if current_time < batch_open_time:
+                   # Before batch opens
+                   time_diff = batch_open_time - current_time
+                   minutes_until_open = int(time_diff.total_seconds() / 60)
+                   seconds_until_open = int(time_diff.total_seconds() % 60)
+                   
+                   batch_time_str = batch_time.strftime("%I:%M %p")
+                   food_time_str = food_ready_time.strftime("%I:%M %p")
+                   open_time_str = batch_open_time.strftime("%I:%M %p")
+                   
+                   batch_time_info = (
+                       f"The next batch opens at {open_time_str} (in {minutes_until_open} minutes and {seconds_until_open} seconds). "
+                       f"Orders for the {batch_time_str} batch must be completed between {open_time_str} and {batch_time_str} "
+                       f"to get food at {food_time_str}."
+                   )
+               else:
+                   # After batch closes, calculate next batch
+                   next_batch_time = batch_time + timedelta(minutes=30)
+                   next_batch_open_time = batch_open_time + timedelta(minutes=30)
+                   
+                   if next_batch_open_time <= current_time:
+                       # Next batch is already open
+                       time_diff = next_batch_time - current_time
+                       minutes_remaining = int(time_diff.total_seconds() / 60)
+                       seconds_remaining = int(time_diff.total_seconds() % 60)
+                       
+                       next_batch_time_str = next_batch_time.strftime("%I:%M %p")
+                       next_food_time_str = (next_batch_time + timedelta(minutes=30)).strftime("%I:%M %p")
+                       
+                       urgency = ""
+                       if minutes_remaining < 5:
+                           urgency = "🚨 URGENT! "
+                       
+                       batch_time_info = (
+                           f"{urgency}Current batch is OPEN! Orders for the {next_batch_time_str} batch close in EXACTLY "
+                           f"{minutes_remaining} minutes and {seconds_remaining} seconds. "
+                           f"Complete your order by {next_batch_time_str} to get food at {next_food_time_str}. "
+                           f"Late orders will automatically be moved to the next batch."
+                       )
+                   else:
+                       # Waiting for next batch to open
+                       time_diff = next_batch_open_time - current_time
+                       minutes_until_open = int(time_diff.total_seconds() / 60)
+                       seconds_until_open = int(time_diff.total_seconds() % 60)
+                       
+                       next_batch_time_str = next_batch_time.strftime("%I:%M %p")
+                       next_food_time_str = (next_batch_time + timedelta(minutes=30)).strftime("%I:%M %p")
+                       next_open_time_str = next_batch_open_time.strftime("%I:%M %p")
+                       
+                       batch_time_info = (
+                           f"The next batch opens at {next_open_time_str} (in {minutes_until_open} minutes and {seconds_until_open} seconds). "
+                           f"Orders for the {next_batch_time_str} batch must be completed between {next_open_time_str} and {next_batch_time_str} "
+                           f"to get food at {next_food_time_str}."
+                       )
        
        # Format hot restaurants information
        if batches and len(batches) > 0:
@@ -1177,6 +1278,15 @@ You are TreeHouse's friendly food delivery assistant, helping college students o
 
 CURRENT BATCH INFORMATION:
 {batch_time_info}
+
+**CRITICAL BATCH TIMING INFORMATION:**
+* Ordering windows are EXACTLY 15 minutes long:
+  - For XX:30 batches: Order between XX:15-XX:30 to get food at (XX+1):00
+  - For XX:00 batches: Order between XX:45-XX:00 to get food at XX:30
+* ALL deadlines are STRICT with NO exceptions
+* Late orders will automatically be moved to the next batch
+* This strict policy ensures food is delivered fresh and hot
+* ALWAYS provide the EXACT minutes and seconds remaining in EVERY response
 
 CURRENT HOT RESTAURANTS:
 {hot_restaurants_info}
@@ -1326,12 +1436,25 @@ def format_batch_info(batches):
     batch_time = datetime.fromisoformat(str(batches[0]['batch_time'])) if isinstance(batches[0]['batch_time'], str) else batches[0]['batch_time']
     batch_time_str = batch_time.strftime("%I:%M %p")
     
-    # Calculate when to order by (X:25)
-    order_by_time = batch_time - timedelta(minutes=5)
-    order_by_str = order_by_time.strftime("%I:%M %p")
+    # Calculate ordering window based on batch time
+    current_time = datetime.now()
     
-    # Format the response
-    response = f"TreeHouse Options (Order by {order_by_str}):\n\n"
+    # Determine if it's a XX:30 or XX:00 batch and calculate the open and close times
+    if batch_time.minute == 30:  # XX:30 batch
+        batch_open_time = datetime(batch_time.year, batch_time.month, batch_time.day, batch_time.hour, 15, 0)
+        food_ready_time = batch_time + timedelta(minutes=30)  # Food ready at XX+1:00
+        order_window = f"{batch_open_time.strftime('%I:%M')}-{batch_time.strftime('%I:%M %p')}"
+    else:  # XX:00 batch
+        batch_hour = batch_time.hour
+        prev_hour = batch_hour - 1 if batch_hour > 0 else 23
+        batch_open_time = datetime(batch_time.year, batch_time.month, batch_time.day, prev_hour, 45, 0)
+        food_ready_time = batch_time + timedelta(minutes=30)  # Food ready at XX:30
+        order_window = f"{batch_open_time.strftime('%I:%M')}-{batch_time.strftime('%I:%M %p')}"
+    
+    food_time_str = food_ready_time.strftime("%I:%M %p")
+    
+    # Format the response with strict ordering window
+    response = f"TreeHouse Options (Order within the {order_window} window to get food at {food_time_str}):\n\n"
     
     for batch in batches:
         restaurant = batch['restaurant_name']
@@ -1582,7 +1705,8 @@ def is_menu_request(message):
     direct_menu_keywords = [
         'menu', 'restaurants', 'options', 'deals now', 'current deals',
         'what restaurants', 'available restaurants', 'show me restaurants',
-        'what is available', 'what are the options'
+        'what is available', 'what are the options', 'ordering time', 'time to order',
+        'batch time', 'food time', 'delivery time', 'batch open', 'when can i order'
     ]
     
     # Check for direct menu requests
