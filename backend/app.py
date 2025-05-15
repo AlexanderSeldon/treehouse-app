@@ -11,6 +11,12 @@ import stripe
 import openai
 import random
 
+try:
+    from uber_direct_delivery import UberDirectDelivery, prepare_batch_for_delivery
+    UBER_DIRECT_AVAILABLE = True
+except ImportError:
+    UBER_DIRECT_AVAILABLE = False
+    logging.warning("Uber Direct module not available. Delivery functionality will be limited.")
 
 # Load environment variables
 load_dotenv()
@@ -264,14 +270,10 @@ def init_restaurant_batches():
     
     next_batch_time = datetime(now.year, now.month, now.day, next_batch_hour, next_batch_minute)
     
-    # Check if we're outside operating hours (11am-10pm)
-    if next_batch_hour < 11 or next_batch_hour >= 22:
-        # Adjust to next opening at 11:00
-        if next_batch_hour < 11:
-            next_batch_time = datetime(now.year, now.month, now.day, 11, 0)
-        else:  # after 22:00
-            next_day = now + timedelta(days=1)
-            next_batch_time = datetime(next_day.year, next_day.month, next_day.day, 11, 0)
+    # Check if we're past midnight and need to adjust to next day
+    if next_batch_hour < current_hour:
+        next_day = now + timedelta(days=1)
+        next_batch_time = datetime(next_day.year, next_day.month, next_day.day, next_batch_hour, next_batch_minute)
     
     conn = sqlite3.connect('treehouse.db')
     c = conn.cursor()
@@ -284,11 +286,6 @@ def init_restaurant_batches():
     
     for i in range(3):  # Create 3 upcoming batches
         batch_time = next_batch_time + timedelta(minutes=30*i)
-        
-        # Only create batches during operating hours
-        batch_hour = batch_time.hour
-        if batch_hour < 11 or batch_hour >= 22:
-            continue
         
         # For each restaurant, create a batch
         for restaurant in hot_restaurants:
@@ -1458,13 +1455,12 @@ def format_batch_info(batches):
     
     for batch in batches:
         restaurant = batch['restaurant_name']
-        location = batch['location']
         current_orders = batch['current_orders']
         max_orders = batch['max_orders']
         fee = batch['delivery_fee']
         free_item = batch.get('free_item', 'Free item')
         
-        response += f"- {restaurant} ({location}, {batch_time_str}) [${fee:.2f} fee, {current_orders}/{max_orders} spots] - Share & get {free_item}\n"
+        response += f"- {restaurant} ({batch_time_str}) [${fee:.2f} fee, {current_orders}/{max_orders} spots] - Share & get {free_item}\n"
     
     response += "\n📱 IMPORTANT - HOW TO ORDER:\n"
     response += "1. First, place your order directly with the restaurant (via their app/website/phone) and select PICKUP (NOT DELIVERY)\n"
@@ -1721,6 +1717,213 @@ def is_menu_request(message):
         return True
             
     return False
+
+
+def process_batch_delivery(batch_id):
+    """
+    Process a batch delivery using Uber Direct
+    
+    Args:
+        batch_id: ID of the batch to process
+        
+    Returns:
+        str: Status of the processing
+    """
+    # Check if Uber Direct integration is available
+    if not UBER_DIRECT_AVAILABLE:
+        logger.error("Cannot process delivery: Uber Direct module not available")
+        return "Error: Uber Direct module not available"
+    
+    # Load Uber Direct API credentials from environment variables
+    api_credentials = {
+        "client_id": os.getenv('UBER_CLIENT_ID'),
+        "client_secret": os.getenv('UBER_CLIENT_SECRET'),
+        "customer_id": os.getenv('UBER_CUSTOMER_ID')
+    }
+    
+    # Check if credentials are available
+    if not all(api_credentials.values()):
+        logger.error("Uber Direct API credentials not configured")
+        return "Error: Uber Direct API credentials not configured"
+    
+    # Connect to database
+    conn = sqlite3.connect('treehouse.db')
+    conn.row_factory = sqlite3.Row
+    
+    try:
+        # Prepare batch data for delivery
+        batch_data = prepare_batch_for_delivery(batch_id, conn)
+        
+        # Check if we have any restaurants with orders
+        if not batch_data.get('restaurants'):
+            logger.info(f"Batch {batch_id} has no restaurant orders to process")
+            conn.close()
+            return "No orders to process"
+        
+        # Create Uber Direct client
+        uber_direct = UberDirectDelivery(
+            client_id=api_credentials["client_id"],
+            client_secret=api_credentials["client_secret"],
+            customer_id=api_credentials["customer_id"],
+            test_mode=True  # Set to False for production
+        )
+        
+        # Process the batch
+        deliveries = uber_direct.process_batch(batch_data)
+        
+        # Update order statuses in database
+        c = conn.cursor()
+        for restaurant, delivery_data in deliveries.items():
+            for order in delivery_data["orders"]:
+                c.execute(
+                    "UPDATE orders SET status = 'in_delivery' WHERE id = ?",
+                    (order["order_id"],)
+                )
+                
+                # Send tracking URL to customer
+                if twilio_client and 'delivery' in delivery_data and 'tracking_url' in delivery_data['delivery']:
+                    try:
+                        # Get customer phone number
+                        c.execute("""
+                            SELECT u.phone_number 
+                            FROM users u 
+                            JOIN orders o ON u.id = o.user_id 
+                            WHERE o.id = ?
+                        """, (order["order_id"],))
+                        
+                        user_result = c.fetchone()
+                        if user_result and user_result[0]:
+                            user_phone = user_result[0]
+                            tracking_message = (
+                                f"Your {restaurant} order is now with Uber! "
+                                f"Track your delivery here: {delivery_data['delivery']['tracking_url']}\n\n"
+                                f"Your food will arrive at {delivery_data['destination']} shortly."
+                            )
+                            
+                            twilio_client.messages.create(
+                                body=tracking_message,
+                                from_=twilio_phone,
+                                to=f"+{user_phone}"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error sending tracking URL: {e}")
+        
+        # Update batch status
+        c.execute(
+            "UPDATE delivery_batches SET status = 'in_progress' WHERE id = ?",
+            (batch_id,)
+        )
+        
+        conn.commit()
+        
+        # Send admin notification
+        if twilio_client:
+            try:
+                admin_notification = (
+                    f"Batch {batch_id} processed!\n\n"
+                    f"Delivery set for {batch_data['location']}\n"
+                    f"Restaurants: {', '.join(deliveries.keys())}\n"
+                    f"Total orders: {sum(len(data['orders']) for _, data in deliveries.items())}"
+                )
+                
+                twilio_client.messages.create(
+                    body=admin_notification,
+                    from_=twilio_phone,
+                    to=notification_email
+                )
+            except Exception as e:
+                logger.error(f"Error sending admin notification: {e}")
+        
+        return "Success"
+    
+    except Exception as e:
+        logger.error(f"Error processing batch delivery: {e}")
+        if 'conn' in locals() and conn:
+            conn.rollback()
+        raise
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
+
+
+# Initialize the scheduler
+scheduler = BackgroundScheduler()
+
+def check_and_process_batches():
+    """
+    Check for batches that have closed and need to be processed for delivery
+    This function runs every minute to find batches that have reached their time
+    """
+    try:
+        now = datetime.now()
+        logger.info(f"Running scheduled batch check at {now}")
+        
+        # Connect to database
+        conn = sqlite3.connect('treehouse.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        
+        # Find batches where:
+        # 1. The batch time has passed (window closed)
+        # 2. Status is still 'scheduled' (not yet processed)
+        # 3. Has at least one order
+        c.execute("""
+            SELECT db.id, db.delivery_time, 
+                  (SELECT COUNT(*) FROM batch_orders WHERE batch_id = db.id) AS order_count
+            FROM delivery_batches db
+            WHERE db.delivery_time <= ? 
+              AND db.status = 'scheduled'
+              AND (SELECT COUNT(*) FROM batch_orders WHERE batch_id = db.id) > 0
+            ORDER BY db.delivery_time
+        """, (now,))
+        
+        batches = c.fetchall()
+        conn.close()
+        
+        if not batches:
+            logger.info("No batches ready for delivery")
+            return
+        
+        # Process each batch that's ready
+        for batch in batches:
+            batch_id = batch['id']
+            batch_time = batch['delivery_time']
+            order_count = batch['order_count']
+            
+            # Only process if there are orders in this batch
+            if order_count > 0:
+                try:
+                    logger.info(f"Auto-processing batch {batch_id} with {order_count} orders")
+                    result = process_batch_delivery(batch_id)
+                    logger.info(f"Successfully processed batch {batch_id}: {result}")
+                except Exception as e:
+                    logger.error(f"Error processing batch {batch_id}: {e}")
+            else:
+                logger.info(f"Skipping empty batch {batch_id}")
+    
+    except Exception as e:
+        logger.error(f"Error in batch check scheduler: {e}")
+
+# Schedule the task to run every minute
+scheduler.add_job(
+    func=check_and_process_batches,
+    trigger="interval",
+    minutes=1
+)
+
+# Start the scheduler
+def start_scheduler():
+    scheduler.start()
+    logger.info("Started batch processing scheduler")
+
+# Shut down the scheduler when the app stops
+def stop_scheduler():
+    scheduler.shutdown()
+    logger.info("Stopped batch processing scheduler")
+
+# Register the shutdown function
+atexit.register(stop_scheduler)
+
 
 @app.route('/webhook/sms', methods=['POST'])
 def sms_webhook():
@@ -3161,5 +3364,9 @@ def serve_react_files(path):
         return send_from_directory('static/react', 'index.html')
 
 if __name__ == '__main__':
+    # Start the scheduler
+    start_scheduler()
+    
+    # Run the Flask app
     port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port, debug=True)
