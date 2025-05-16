@@ -5,3 +5,4 @@ gunicorn
 flask-cors
 stripe
 openai
+APScheduler
