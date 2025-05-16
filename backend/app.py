@@ -11,6 +11,7 @@ import stripe
 import openai
 import random
 from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
 
 try:
     from uber_direct_delivery import UberDirectDelivery, prepare_batch_for_delivery
